@@ -2,7 +2,7 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use sql_traits::traits::ForeignKeyLike;
+use sql_traits::{errors::LookupError, traits::ForeignKeyLike};
 
 use crate::{
     structs::Workspace,
@@ -14,18 +14,29 @@ pub trait ForeignKeySynLike: ForeignKeyLike {
     /// Returns the syn representation of the foreign key using
     /// the `fk` or the `fpk` macro, depending on whether the foreign key
     /// is a foreign primary key or not.
-    fn to_syn(&self, database: &Self::DB, workspace: &Workspace) -> TokenStream {
-        let foreign_table_ident = self.referenced_table(database).table_ident();
-        let foreign_table_crate_ident = self.referenced_table(database).crate_ident(workspace);
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the referenced table or the columns of
+    /// the foreign key cannot be resolved.
+    fn to_syn(
+        &self,
+        database: &Self::DB,
+        workspace: &Workspace,
+    ) -> Result<TokenStream, LookupError> {
+        let foreign_table = self.referenced_table(database)?;
+        let foreign_table_ident = foreign_table.table_ident();
+        let foreign_table_crate_ident = foreign_table.crate_ident(workspace);
         let host_column_paths = self
-            .host_columns(database)
+            .host_columns(database)?
             .map(ColumnSynLike::column_snake_ident)
             .collect::<Vec<syn::Ident>>();
+        let is_self_referential = self.is_self_referential(database)?;
         let foreign_column_paths = self
-            .referenced_columns(database)
+            .referenced_columns(database)?
             .map(|col| {
                 let col_ident = col.column_snake_ident();
-                if self.is_self_referential(database) {
+                if is_self_referential {
                     syn::parse_quote!(#foreign_table_ident::#col_ident)
                 } else {
                     syn::parse_quote!(::#foreign_table_crate_ident::#foreign_table_ident::#col_ident)
@@ -33,9 +44,9 @@ pub trait ForeignKeySynLike: ForeignKeyLike {
             })
             .collect::<Vec<syn::Path>>();
 
-        quote! {
+        Ok(quote! {
             #[table_model(foreign_key((#(#host_column_paths,)*), (#(#foreign_column_paths),*)))]
-        }
+        })
     }
 }
 

@@ -2,7 +2,11 @@
 //! check constraint expressions into Rust code.
 use proc_macro2::TokenStream;
 use quote::quote;
-use sql_traits::traits::{CheckConstraintLike, ColumnLike, DatabaseLike, FunctionLike, TableLike};
+use sql_traits::{
+    errors::{LookupError, ObjectKind},
+    structs::IdentifierCase,
+    traits::{CheckConstraintLike, ColumnLike, DatabaseLike, FunctionLike, TableLike},
+};
 use sqlparser::ast::{
     BinaryOperator, Expr, FunctionArg, FunctionArgExpr, FunctionArgumentList, FunctionArguments,
     Ident, Value, ValueWithSpan,
@@ -12,6 +16,10 @@ use crate::{
     structs::{ExternalFunctionRef, ExternalTypeRef, Workspace},
     traits::{column::ColumnSynLike, function::FunctionSynLike, table::TableSynLike},
 };
+
+/// A translated expression, the columns it scopes and the type it returns.
+type ParsedExpression<'a, 'workspace, DB> =
+    (TokenStream, Vec<&'a <DB as DatabaseLike>::Column>, Option<ExternalTypeRef<'workspace>>);
 
 pub(super) struct TranslateExpression<'workspace, 'db, DB: DatabaseLike> {
     check_constraint: &'db DB::CheckConstraint,
@@ -78,20 +86,23 @@ where
     }
 
     /// Maps the provided expression to a validation error, when applicable.
-    fn map_expr_to_validation_error(&self, expr: &Expr) -> Option<TokenStream> {
-        match expr {
+    fn map_expr_to_validation_error(
+        &self,
+        expr: &Expr,
+    ) -> Result<Option<TokenStream>, LookupError> {
+        Ok(match expr {
             Expr::BinaryOp { left, right, op } => {
                 match (left.as_ref(), right.as_ref()) {
                     (
                         Expr::Identifier(Ident { value: ident, .. }),
                         Expr::Value(ValueWithSpan { value, .. }),
-                    ) => Some(self.map_value_expr_to_single_field_error(ident, value, op)),
+                    ) => Some(self.map_value_expr_to_single_field_error(ident, value, op)?),
                     (Expr::Identifier(Ident { value: ident, .. }), Expr::Function(func))
                         if func.name.to_string() == "NOW" =>
                     {
-                        let column = self.column(ident);
+                        let column = self.column(ident)?;
                         let column_ident = column.column_snake_ident();
-                        let table_ident = self.table().table_snake_ident();
+                        let table_ident = self.table()?.table_snake_ident();
 
                         assert!(matches!(op, BinaryOperator::LtEq | BinaryOperator::Lt));
 
@@ -111,11 +122,11 @@ where
                     {
                         let string_type = self.workspace.string();
                         let (parsed_arguments, columns) =
-                            self.parse_function_arguments(&func.args, &[string_type]);
+                            self.parse_function_arguments(&func.args, &[string_type])?;
                         assert_eq!(columns.len(), 1);
                         let column = columns[0];
                         let parsed_argument = &parsed_arguments[0];
-                        let table_ident = self.table().table_snake_ident();
+                        let table_ident = self.table()?.table_snake_ident();
                         let column_ident = column.column_snake_ident();
                         let value_usize = self.parse_value(value, Some(self.workspace.usize())).0;
                         let operator = syn_operator(&invert_operator(op));
@@ -137,17 +148,17 @@ where
                             ident,
                             value,
                             &invert_operator(op),
-                        ))
+                        )?)
                     }
                     (
                         Expr::Identifier(Ident { value: left_ident, .. }),
                         Expr::Identifier(Ident { value: right_ident, .. }),
-                    ) => Some(self.map_expr_to_double_field_error(left_ident, right_ident, op)),
+                    ) => Some(self.map_expr_to_double_field_error(left_ident, right_ident, op)?),
                     _ => None,
                 }
             }
             _ => None,
-        }
+        })
     }
 
     fn is_contextual_column(&self, column: &DB::Column) -> bool {
@@ -159,20 +170,21 @@ where
         left: &str,
         right: &str,
         op: &BinaryOperator,
-    ) -> TokenStream {
-        let left_column = self.column(left);
-        let right_column = self.column(right);
-        let table_ident = self.table().table_snake_ident();
+    ) -> Result<TokenStream, LookupError> {
+        let left_column = self.column(left)?;
+        let right_column = self.column(right)?;
+        let table_ident = self.table()?.table_snake_ident();
         let left_column_ident = left_column.column_snake_ident();
         let right_column_ident = right_column.column_snake_ident();
         let l_name = quote! { crate::#table_ident::#left_column_ident::NAME };
         let r_name = quote! { crate::#table_ident::#right_column_ident::NAME };
         let validation_error = quote! { ::validation_errors::ValidationError };
+        let left_optional =
+            left_column.is_nullable(self.database)? && !self.is_contextual_column(left_column);
+        let right_optional =
+            right_column.is_nullable(self.database)? && !self.is_contextual_column(right_column);
         let compare_op = |op: TokenStream| {
-            match (
-                left_column.is_nullable(self.database) && !self.is_contextual_column(left_column),
-                right_column.is_nullable(self.database) && !self.is_contextual_column(right_column),
-            ) {
+            match (left_optional, right_optional) {
                 (true, true) => {
                     quote! {
                         #left_column_ident.as_ref().is_some_and(|#left_column_ident|
@@ -203,7 +215,7 @@ where
                 }
             }
         };
-        match op {
+        Ok(match op {
             BinaryOperator::NotEq => {
                 let compare_op = compare_op(quote! {==});
                 quote! {
@@ -247,7 +259,7 @@ where
             _ => {
                 unimplemented!("Operator {op:?} not supported for double field error mapping");
             }
-        }
+        })
     }
 
     fn map_value_expr_to_single_field_error(
@@ -255,11 +267,11 @@ where
         ident: &str,
         value: &Value,
         op: &BinaryOperator,
-    ) -> TokenStream {
-        let column = self.column(ident);
+    ) -> Result<TokenStream, LookupError> {
+        let column = self.column(ident)?;
         let column_ident = column.column_snake_ident();
-        let table_ident = self.table().table_snake_ident();
-        match op {
+        let table_ident = self.table()?.table_snake_ident();
+        Ok(match op {
             BinaryOperator::NotEq => {
                 if column.is_textual(self.database)
                     && value == &Value::SingleQuotedString(String::new())
@@ -331,48 +343,26 @@ where
             _ => {
                 unimplemented!("Operator {op:?} not supported for single field error mapping");
             }
-        }
+        })
     }
 
     /// Returns reference to the table of the check constraint.
-    fn table(&self) -> &DB::Table {
+    fn table(&self) -> Result<&DB::Table, LookupError> {
         self.check_constraint.table(self.database)
     }
 
     /// Returns reference to the requested function by name.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name of the function
-    ///
-    /// # Panics
-    ///
-    /// * If the function does not exist, which should not happen as it would
-    ///   mean that the provided SQL defining the database is invalid.
-    fn function(&self, name: &str) -> &DB::Function {
+    fn function(&self, name: &str) -> Result<&DB::Function, LookupError> {
         self.check_constraint
-            .function(self.database, name)
-            .unwrap_or_else(|| panic!("Function `{name}` not found for check constraint"))
+            .function(self.database, name)?
+            .ok_or_else(|| ObjectKind::Function.not_in_database(name))
     }
 
     /// Returns reference to the requested involved column by name.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name of the column
-    ///
-    /// # Panics
-    ///
-    /// * If the column does not exist, which should not happen as it would mean
-    ///   that the provided SQL defining the database is invalid.
-    fn column(&self, name: &str) -> &DB::Column {
-        self.check_constraint.column(self.database, name).unwrap_or_else(|| {
-            panic!(
-                "Column `{}` not found for check constraint from table `{}`.",
-                name,
-                self.table().table_name()
-            )
-        })
+    fn column(&self, name: &str) -> Result<&DB::Column, LookupError> {
+        self.check_constraint
+            .column(self.database, name, IdentifierCase::Exact)?
+            .ok_or_else(|| ObjectKind::Column.not_in_database(name))
     }
 
     /// Translates the provided function argument to a
@@ -381,20 +371,20 @@ where
         &self,
         arg: &FunctionArgExpr,
         arg_type: ExternalTypeRef<'workspace>,
-    ) -> (TokenStream, Option<&'_ DB::Column>) {
+    ) -> Result<(TokenStream, Option<&'_ DB::Column>), LookupError> {
         match arg {
             FunctionArgExpr::Expr(expr) => {
                 let (token_stream, mut scoped_columns, _returning_type) =
-                    self.inner_parse(expr, Some(arg_type));
+                    self.inner_parse(expr, Some(arg_type))?;
                 if scoped_columns.len() > 1 {
                     unimplemented!("Multiple scoped columns not supported");
                 }
-                (token_stream, scoped_columns.pop())
+                Ok((token_stream, scoped_columns.pop()))
             }
             FunctionArgExpr::QualifiedWildcard(_) => {
                 unimplemented!("QualifiedWildcard not supported");
             }
-            FunctionArgExpr::Wildcard => {
+            FunctionArgExpr::Wildcard | FunctionArgExpr::WildcardWithOptions(_) => {
                 unimplemented!("Wildcard not supported");
             }
         }
@@ -406,7 +396,7 @@ where
         &self,
         arg: &FunctionArg,
         arg_type: ExternalTypeRef<'workspace>,
-    ) -> (TokenStream, Option<&'_ DB::Column>) {
+    ) -> Result<(TokenStream, Option<&'_ DB::Column>), LookupError> {
         match arg {
             FunctionArg::Named { .. } => {
                 unimplemented!("Named arguments not supported");
@@ -424,16 +414,16 @@ where
         &self,
         args: &FunctionArgumentList,
         argument_types: &[ExternalTypeRef<'workspace>],
-    ) -> (Vec<TokenStream>, Vec<&'_ DB::Column>) {
+    ) -> Result<(Vec<TokenStream>, Vec<&'_ DB::Column>), LookupError> {
         let mut token_stream = Vec::with_capacity(args.args.len());
         let mut columns = Vec::new();
         assert_eq!(args.args.len(), argument_types.len());
         for (arg, arg_type) in args.args.iter().zip(argument_types.iter().copied()) {
-            let (column_token_stream, column) = self.parse_function_argument(arg, arg_type);
+            let (column_token_stream, column) = self.parse_function_argument(arg, arg_type)?;
             token_stream.push(column_token_stream);
             columns.extend(column);
         }
-        (token_stream, columns)
+        Ok((token_stream, columns))
     }
 
     /// Translates the provided function arguments to a
@@ -442,9 +432,9 @@ where
         &self,
         args: &FunctionArguments,
         argument_types: &[ExternalTypeRef<'workspace>],
-    ) -> (Vec<TokenStream>, Vec<&'_ DB::Column>) {
+    ) -> Result<(Vec<TokenStream>, Vec<&'_ DB::Column>), LookupError> {
         match args {
-            FunctionArguments::None => (Vec::new(), Vec::new()),
+            FunctionArguments::None => Ok((Vec::new(), Vec::new())),
             FunctionArguments::Subquery(_) => {
                 unimplemented!("Subquery arguments not supported");
             }
@@ -468,7 +458,7 @@ where
             over,
             within_group,
         }: &sqlparser::ast::Function,
-    ) -> (TokenStream, Option<ExternalTypeRef<'workspace>>) {
+    ) -> Result<(TokenStream, Option<ExternalTypeRef<'workspace>>), LookupError> {
         if !within_group.is_empty() {
             unimplemented!("WithinGroup not supported");
         }
@@ -487,7 +477,7 @@ where
         if *uses_odbc_syntax {
             unimplemented!("ODBC syntax not supported");
         }
-        let function = self.function(&name.to_string());
+        let function = self.function(&name.to_string())?;
 
         let argument_types = function
             .argument_types(self.workspace, self.database)
@@ -498,7 +488,7 @@ where
             })
             .collect::<Vec<ExternalTypeRef>>();
 
-        let (args, scoped_columns) = self.parse_function_arguments(args, &argument_types);
+        let (args, scoped_columns) = self.parse_function_arguments(args, &argument_types)?;
 
         let function_ref: ExternalFunctionRef =
             function.external_function_ref(self.workspace).unwrap_or_else(|| {
@@ -508,7 +498,7 @@ where
                 )
             });
 
-        let table_ident = self.table().table_snake_ident();
+        let table_ident = self.table()?.table_snake_ident();
 
         let attributes = scoped_columns.iter().map(|scoped_column| {
             let column_ident = scoped_column.column_snake_ident();
@@ -537,12 +527,12 @@ where
             }
         };
 
-        (
+        Ok((
             quote! {
                 #function_ref(#(#args),*)#map_err
             },
             None,
-        )
+        ))
     }
 
     /// Parses the provided [`Value`] for the provided
@@ -632,20 +622,20 @@ where
     #[allow(clippy::too_many_lines)]
     /// Translates the provided expression to a
     /// [`TokenStream`]
-    pub(super) fn parse(&self, expr: &Expr) -> TokenStream {
-        if let Some(validation_error_token) = self.map_expr_to_validation_error(expr) {
-            return validation_error_token;
+    pub(super) fn parse(&self, expr: &Expr) -> Result<TokenStream, LookupError> {
+        if let Some(validation_error_token) = self.map_expr_to_validation_error(expr)? {
+            return Ok(validation_error_token);
         }
 
-        let (internal_token, scoped_columns, _returning_type) = self.inner_parse(expr, None);
+        let (internal_token, scoped_columns, _returning_type) = self.inner_parse(expr, None)?;
 
         if !scoped_columns.is_empty() {
             unimplemented!("Scoped columns not supported");
         }
 
-        quote! {
+        Ok(quote! {
             #internal_token?;
-        }
+        })
     }
 
     #[allow(clippy::too_many_lines)]
@@ -655,22 +645,22 @@ where
         &self,
         expr: &Expr,
         type_hint: Option<ExternalTypeRef<'workspace>>,
-    ) -> (TokenStream, Vec<&'_ DB::Column>, Option<ExternalTypeRef<'workspace>>) {
-        match expr {
+    ) -> Result<ParsedExpression<'_, 'workspace, DB>, LookupError> {
+        Ok(match expr {
             Expr::Function(function) => {
-                let (token_stream, return_type) = self.parse_function(function);
+                let (token_stream, return_type) = self.parse_function(function)?;
                 (token_stream, Vec::new(), return_type)
             }
-            Expr::Cast { kind, expr, data_type: _, array: _, format } => {
+            Expr::Cast { kind, expr, data_type: _, format } => {
                 verify_cast_kind(kind);
                 if format.is_some() {
                     unimplemented!("Format not supported");
                 }
-                self.inner_parse(expr, type_hint)
+                self.inner_parse(expr, type_hint)?
             }
-            Expr::Nested(expr) => self.inner_parse(expr, type_hint),
+            Expr::Nested(expr) => self.inner_parse(expr, type_hint)?,
             Expr::Identifier(ident) => {
-                let column = self.column(&ident.value);
+                let column = self.column(&ident.value)?;
                 let column_ident = column.column_snake_ident();
                 (
                     quote! {
@@ -695,9 +685,9 @@ where
                 match op {
                     BinaryOperator::And => {
                         let (left, left_scoped_columns, left_returning_type) =
-                            self.inner_parse(left, None);
+                            self.inner_parse(left, None)?;
                         let (right, right_scoped_columns, right_returning_type) =
-                            self.inner_parse(right, None);
+                            self.inner_parse(right, None)?;
                         if !left_scoped_columns.is_empty() || !right_scoped_columns.is_empty() {
                             unimplemented!("Scoped columns not supported");
                         }
@@ -723,9 +713,9 @@ where
                     }
                     BinaryOperator::Or => {
                         let (left, left_scoped_columns, left_returning_type) =
-                            self.inner_parse(left, None);
+                            self.inner_parse(left, None)?;
                         let (right, right_scoped_columns, right_returning_type) =
-                            self.inner_parse(right, None);
+                            self.inner_parse(right, None)?;
                         if !left_scoped_columns.is_empty() || !right_scoped_columns.is_empty() {
                             unimplemented!("Scoped columns not supported");
                         }
@@ -755,11 +745,11 @@ where
                     | BinaryOperator::Lt
                     | BinaryOperator::GtEq
                     | BinaryOperator::LtEq => {
-                        let (left, _, left_returning_type) = self.inner_parse(left, None);
+                        let (left, _, left_returning_type) = self.inner_parse(left, None)?;
                         let left_returning_type =
                             left_returning_type.expect("Left side of AND must have a type");
                         let (right, _, right_returning_type) =
-                            self.inner_parse(right, Some(left_returning_type));
+                            self.inner_parse(right, Some(left_returning_type))?;
                         let right_returning_type =
                             right_returning_type.expect("Right side of AND must have a type");
                         if left_returning_type != right_returning_type {
@@ -790,8 +780,9 @@ where
                     | BinaryOperator::Multiply
                     | BinaryOperator::Divide
                     | BinaryOperator::Modulo => {
-                        let (left, _, left_returning_type) = self.inner_parse(left, type_hint);
-                        let (right, _, right_returning_type) = self.inner_parse(right, type_hint);
+                        let (left, _, left_returning_type) = self.inner_parse(left, type_hint)?;
+                        let (right, _, right_returning_type) =
+                            self.inner_parse(right, type_hint)?;
                         if left_returning_type != right_returning_type {
                             unimplemented!(
                                 "Binary operation between different types not supported: {left_returning_type:?} and {right_returning_type:?}. {:?}",
@@ -848,8 +839,8 @@ where
             }
             Expr::IsNull(expr) => {
                 if let Expr::Identifier(Ident { value: ident, .. }) = expr.as_ref() {
-                    let column = self.column(ident);
-                    if !column.is_nullable(self.database) {
+                    let column = self.column(ident)?;
+                    if !column.is_nullable(self.database)? {
                         unimplemented!(
                             "IS NULL on non-nullable column `{}` not supported. {:?}",
                             ident,
@@ -876,7 +867,7 @@ where
                     }
                 } else {
                     let (inner_token, _scoped_columns, _returning_type) =
-                        self.inner_parse(expr, None);
+                        self.inner_parse(expr, None)?;
                     (
                         quote! {
                             #inner_token.is_none()
@@ -888,8 +879,8 @@ where
             }
             Expr::IsNotNull(expr) => {
                 if let Expr::Identifier(Ident { value: ident, .. }) = expr.as_ref() {
-                    let column = self.column(ident);
-                    if !column.is_nullable(self.database) {
+                    let column = self.column(ident)?;
+                    if !column.is_nullable(self.database)? {
                         unimplemented!(
                             "IS NOT NULL on non-nullable column `{}` not supported. {:?}",
                             ident,
@@ -916,7 +907,7 @@ where
                     }
                 } else {
                     let (inner_token, _scoped_columns, _returning_type) =
-                        self.inner_parse(expr, None);
+                        self.inner_parse(expr, None)?;
                     (
                         quote! {
                             #inner_token.is_some()
@@ -933,6 +924,6 @@ where
                     self.check_constraint
                 )
             }
-        }
+        })
     }
 }

@@ -11,8 +11,9 @@ use sql_relations::traits::{
     HorizontalSameAsColumnLike, TriangularSameAsColumnLike, TriangularSameAsForeignKeyLike,
     VerticalSameAsColumnLike,
 };
-use sql_traits::traits::{
-    CheckConstraintLike, ColumnLike, DatabaseLike, ForeignKeyLike, TableLike,
+use sql_traits::{
+    errors::LookupError,
+    traits::{CheckConstraintLike, ColumnLike, DatabaseLike, ForeignKeyLike, TableLike},
 };
 use syn::{Ident, Type};
 
@@ -35,8 +36,9 @@ pub trait ColumnSynLike: ColumnLike {
     /// use sqlparser::dialect::GenericDialect;
     /// use synql::prelude::*;
     /// let db = ParserDB::parse::<GenericDialect>("CREATE TABLE my_table (my_column INT);")?;
-    /// let table = db.table(None, "my_table").unwrap();
-    /// let column = table.column("my_column", &db).unwrap();
+    /// let table =
+    ///     db.table_by_target(TargetName::new("my_table", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let column = table.column("my_column", &db, IdentifierCase::AsWritten)?.unwrap();
     /// assert_eq!(column.column_acronym(), "MC");
     /// # Ok(())
     /// # }
@@ -69,8 +71,9 @@ pub trait ColumnSynLike: ColumnLike {
     /// use synql::prelude::*;
     ///
     /// let db = ParserDB::parse::<GenericDialect>("CREATE TABLE my_table (_my__column INT);")?;
-    /// let table = db.table(None, "my_table").unwrap();
-    /// let column = table.column("_my__column", &db).unwrap();
+    /// let table =
+    ///     db.table_by_target(TargetName::new("my_table", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let column = table.column("_my__column", &db, IdentifierCase::AsWritten)?.unwrap();
     /// assert_eq!(column.column_snake_name(), "my_column");
     /// # Ok(())
     /// # }
@@ -90,9 +93,10 @@ pub trait ColumnSynLike: ColumnLike {
     /// use synql::prelude::*;
     /// let db =
     ///     ParserDB::parse::<GenericDialect>("CREATE TABLE my_table (my_column INT, MyColumn INT);")?;
-    /// let table = db.table(None, "my_table").unwrap();
-    /// let column1 = table.column("my_column", &db).unwrap();
-    /// let column2 = table.column("MyColumn", &db).unwrap();
+    /// let table =
+    ///     db.table_by_target(TargetName::new("my_table", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let column1 = table.column("my_column", &db, IdentifierCase::AsWritten)?.unwrap();
+    /// let column2 = table.column("MyColumn", &db, IdentifierCase::AsWritten)?.unwrap();
     /// assert!(column1.has_snake_case_column_name());
     /// assert!(!column2.has_snake_case_column_name());
     /// # Ok(())
@@ -113,8 +117,9 @@ pub trait ColumnSynLike: ColumnLike {
     /// use synql::prelude::*;
     ///
     /// let db = ParserDB::parse::<GenericDialect>("CREATE TABLE my_table (type INT);")?;
-    /// let table = db.table(None, "my_table").unwrap();
-    /// let column = table.column("type", &db).unwrap();
+    /// let table =
+    ///     db.table_by_target(TargetName::new("my_table", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let column = table.column("type", &db, IdentifierCase::AsWritten)?.unwrap();
     /// assert_eq!(column.column_snake_ident().to_string(), "r#type");
     /// # Ok(())
     /// # }
@@ -139,8 +144,9 @@ pub trait ColumnSynLike: ColumnLike {
     /// use synql::prelude::*;
     ///
     /// let db = ParserDB::parse::<GenericDialect>("CREATE TABLE my_table (my_column INT);")?;
-    /// let table = db.table(None, "my_table").unwrap();
-    /// let column = table.column("my_column", &db).unwrap();
+    /// let table =
+    ///     db.table_by_target(TargetName::new("my_table", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let column = table.column("my_column", &db, IdentifierCase::AsWritten)?.unwrap();
     /// assert_eq!(column.column_camel_name(), "MyColumn");
     /// # Ok(())
     /// # }
@@ -159,8 +165,9 @@ pub trait ColumnSynLike: ColumnLike {
     /// use sqlparser::dialect::GenericDialect;
     /// use synql::prelude::*;
     /// let db = ParserDB::parse::<GenericDialect>("CREATE TABLE my_table (struct INT);")?;
-    /// let table = db.table(None, "my_table").unwrap();
-    /// let column = table.column("struct", &db).unwrap();
+    /// let table =
+    ///     db.table_by_target(TargetName::new("my_table", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let column = table.column("struct", &db, IdentifierCase::AsWritten)?.unwrap();
     /// assert_eq!(column.column_camel_ident().to_string(), "Struct");
     /// # Ok(())
     /// # }
@@ -179,29 +186,51 @@ pub trait ColumnSynLike: ColumnLike {
         workspace: &'workspace Workspace,
         database: &Self::DB,
     ) -> Option<ExternalTypeRef<'workspace>> {
-        workspace.external_postgres_type(self.normalized_data_type(database))
+        workspace.external_postgres_type(&self.normalized_data_type(database))
     }
 
     /// Returns the Diesel type of this column.
-    fn diesel_type(&self, workspace: &Workspace, database: &Self::DB) -> Option<Type> {
-        let external_type = self.external_postgres_type(workspace, database)?;
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the nullability of the column cannot be
+    /// resolved.
+    fn diesel_type(
+        &self,
+        workspace: &Workspace,
+        database: &Self::DB,
+    ) -> Result<Option<Type>, LookupError> {
+        let Some(external_type) = self.external_postgres_type(workspace, database) else {
+            return Ok(None);
+        };
         let diesel_type = external_type.diesel_type();
-        if self.is_nullable(database) {
-            Some(syn::parse_quote!(diesel::sql_types::Nullable<#diesel_type>))
+        Ok(Some(if self.is_nullable(database)? {
+            syn::parse_quote!(diesel::sql_types::Nullable<#diesel_type>)
         } else {
-            Some(diesel_type.clone())
-        }
+            diesel_type.clone()
+        }))
     }
 
     /// Returns the Rust type of this column.
-    fn rust_type(&self, workspace: &Workspace, database: &Self::DB) -> Option<Type> {
-        let external_type = self.external_postgres_type(workspace, database)?;
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the nullability of the column cannot be
+    /// resolved.
+    fn rust_type(
+        &self,
+        workspace: &Workspace,
+        database: &Self::DB,
+    ) -> Result<Option<Type>, LookupError> {
+        let Some(external_type) = self.external_postgres_type(workspace, database) else {
+            return Ok(None);
+        };
         let rust_type = external_type.rust_type();
-        if self.is_nullable(database) {
-            Some(syn::parse_quote!(Option<#rust_type>))
+        Ok(Some(if self.is_nullable(database)? {
+            syn::parse_quote!(Option<#rust_type>)
         } else {
-            Some(rust_type.clone())
-        }
+            rust_type.clone()
+        }))
     }
 
     /// Returns whether the column type supports the `Copy` trait in Rust.
@@ -236,13 +265,18 @@ pub trait ColumnSynLike: ColumnLike {
     }
 
     /// Generates the vertical same-as decorators for this column.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the vertical same-as columns cannot be
+    /// resolved.
     fn generate_vertical_same_as_decorators(
         &self,
         workspace: &Workspace,
         database: &Self::DB,
-    ) -> Vec<proc_macro2::TokenStream> {
+    ) -> Result<Vec<proc_macro2::TokenStream>, LookupError> {
         let mut vertical_same_as_decorators = vec![];
-        for same_as in self.dominant_vertical_same_as_columns(database) {
+        for same_as in self.dominant_vertical_same_as_columns(database)? {
             let parent_table = same_as.table(database);
             let parent_table_ident = parent_table.table_snake_ident();
             let parent_column_ident = same_as.column_snake_ident();
@@ -251,31 +285,37 @@ pub trait ColumnSynLike: ColumnLike {
                 #[same_as(#parent_table_crate::#parent_table_ident::#parent_column_ident)]
             });
         }
-        vertical_same_as_decorators
+        Ok(vertical_same_as_decorators)
     }
 
     /// Generates the horizontal same-as decorators for this column.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the horizontal same-as foreign keys or
+    /// their tables and columns cannot be resolved.
     fn generate_horizontal_same_as_decorators(
         &self,
         workspace: &Workspace,
         database: &Self::DB,
-    ) -> Vec<proc_macro2::TokenStream> {
+    ) -> Result<Vec<proc_macro2::TokenStream>, LookupError> {
         let mut horizontal_same_as_decorators = vec![];
-        for same_as in self.horizontal_same_as_foreign_keys(database) {
+        for same_as in self.horizontal_same_as_foreign_keys(database)? {
             let host_columns = same_as
-                .host_columns(database)
+                .host_columns(database)?
                 .map(Borrow::borrow)
                 .collect::<Vec<&<Self::DB as DatabaseLike>::Column>>();
             let referenced_columns = same_as
-                .referenced_columns(database)
+                .referenced_columns(database)?
                 .map(Borrow::borrow)
                 .collect::<Vec<&<Self::DB as DatabaseLike>::Column>>();
+            let satellite_table = same_as.referenced_table(database)?;
 
             let [key, other] = host_columns.as_slice() else {
                 unimplemented!(
                     "Only binary foreign keys are supported for horizontal same-as constraints, found a foreign key in table `{}` to table `{}` with `{}` columns: {}",
                     same_as.host_table(database).table_name(),
-                    same_as.referenced_table(database).table_name(),
+                    satellite_table.table_name(),
                     host_columns.len(),
                     host_columns.iter().map(ColumnLike::column_name).collect::<Vec<_>>().join(", ")
                 );
@@ -284,7 +324,7 @@ pub trait ColumnSynLike: ColumnLike {
                 unreachable!();
             };
 
-            if !same_as.is_horizontal_same_as_of_triangular(database) {
+            if !same_as.is_horizontal_same_as_of_triangular(database)? {
                 continue;
             }
 
@@ -299,7 +339,6 @@ pub trait ColumnSynLike: ColumnLike {
                 );
             }
             let key_ident = key.column_snake_ident();
-            let satellite_table = same_as.referenced_table(database);
             let satellite_table_ident = satellite_table.table_snake_ident();
             let satellite_table_crate = satellite_table.crate_ident(workspace);
             let referenced_column_ident = referenced_column.column_snake_ident();
@@ -308,22 +347,27 @@ pub trait ColumnSynLike: ColumnLike {
                 #[same_as(#satellite_table_crate::#satellite_table_ident::#referenced_column_ident, #key_ident)]
             });
         }
-        horizontal_same_as_decorators
+        Ok(horizontal_same_as_decorators)
     }
 
     /// Generates the triangular same-as decorators for this column.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the triangular same-as foreign keys or
+    /// their tables cannot be resolved.
     fn generate_triangular_same_as_decorators(
         &self,
         workspace: &Workspace,
         database: &Self::DB,
-    ) -> Vec<proc_macro2::TokenStream> {
+    ) -> Result<Vec<proc_macro2::TokenStream>, LookupError> {
         let mut triangular_same_as_decorators = vec![];
-        for foreign_key in self.triangular_same_as_foreign_keys(database) {
-            let Some(triangular) = foreign_key.triangular_same_as(database) else {
+        for foreign_key in self.triangular_same_as_foreign_keys(database)? {
+            let Some(triangular) = foreign_key.triangular_same_as(database)? else {
                 continue;
             };
 
-            let referenced_table = foreign_key.referenced_table(database);
+            let referenced_table = foreign_key.referenced_table(database)?;
             let referenced_table_ident = referenced_table.table_snake_ident();
             let referenced_table_crate = referenced_table.crate_ident(workspace);
             let referenced_table_path = quote! { #referenced_table_crate::#referenced_table_ident };
@@ -338,7 +382,7 @@ pub trait ColumnSynLike: ColumnLike {
                 }
             });
         }
-        triangular_same_as_decorators
+        Ok(triangular_same_as_decorators)
     }
 
     /// Generates the default decorator for this column.
@@ -362,7 +406,8 @@ pub trait ColumnSynLike: ColumnLike {
         workspace: &Workspace,
         database: &Self::DB,
     ) -> Result<proc_macro2::TokenStream, crate::Error> {
-        if self.is_primary_key(database) && self.table(database).has_surrogate_primary_key(database)
+        if self.is_primary_key(database)?
+            && self.table(database).has_surrogate_primary_key(database)?
         {
             return Ok(quote! {});
         }
@@ -435,9 +480,9 @@ pub trait ColumnSynLike: ColumnLike {
         database: &Self::DB,
     ) -> Result<Vec<proc_macro2::TokenStream>, crate::Error> {
         let mut validations = vec![];
-        let table_has_surrogate_pk = self.table(database).has_surrogate_primary_key(database);
-        for check_constraint in self.non_tautological_check_constraints(database) {
-            if check_constraint.number_of_columns(database) <= 1 {
+        let table_has_surrogate_pk = self.table(database).has_surrogate_primary_key(database)?;
+        for check_constraint in self.non_tautological_check_constraints(database)? {
+            if check_constraint.number_of_columns(database)? <= 1 {
                 continue;
             }
             if check_constraint.is_mutual_nullability_constraint(database) {
@@ -445,8 +490,8 @@ pub trait ColumnSynLike: ColumnLike {
             }
 
             let mut skip_constraint = false;
-            for column in check_constraint.columns(database) {
-                if column.is_primary_key(database) && table_has_surrogate_pk {
+            for column in check_constraint.columns(database)? {
+                if column.is_primary_key(database)? && table_has_surrogate_pk {
                     skip_constraint = true;
                     break;
                 }
@@ -455,7 +500,7 @@ pub trait ColumnSynLike: ColumnLike {
                 continue;
             }
 
-            validations.push(check_constraint.to_syn(database, workspace, &[self.borrow()]));
+            validations.push(check_constraint.to_syn(database, workspace, &[self.borrow()])?);
         }
         Ok(validations)
     }
@@ -471,11 +516,11 @@ pub trait ColumnSynLike: ColumnLike {
         database: &Self::DB,
     ) -> Result<Vec<proc_macro2::TokenStream>, crate::Error> {
         let mut validations = vec![];
-        for check_constraint in self.non_tautological_check_constraints(database) {
-            if check_constraint.number_of_columns(database) > 1 {
+        for check_constraint in self.non_tautological_check_constraints(database)? {
+            if check_constraint.number_of_columns(database)? > 1 {
                 continue;
             }
-            validations.push(check_constraint.to_syn(database, workspace, &[self.borrow()]));
+            validations.push(check_constraint.to_syn(database, workspace, &[self.borrow()])?);
         }
         Ok(validations)
     }
@@ -588,7 +633,7 @@ pub trait ColumnSynLike: ColumnLike {
                     sql_type: self.data_type(database).to_string(),
                 }
             })?;
-        let documentation = self.column_doc(database).map_or_else(
+        let documentation = self.column_doc(database)?.map_or_else(
             || {
                 format!(
                     "Field representing the `{}` column in table `{}`.",
@@ -610,25 +655,25 @@ pub trait ColumnSynLike: ColumnLike {
         // If the column has vertical same-as constraint, we add the
         // ` #[same_as(parent::parent_column)]` decorators
         let vertical_same_as_decorators =
-            self.generate_vertical_same_as_decorators(workspace, database);
+            self.generate_vertical_same_as_decorators(workspace, database)?;
 
         // If the column has horizontal same-as constraint, we add the
         // ` #[same_as(satellite::table::column, key)]` decorators
         let horizontal_same_as_decorators =
-            self.generate_horizontal_same_as_decorators(workspace, database);
+            self.generate_horizontal_same_as_decorators(workspace, database)?;
 
         // If the handle has foreign keys which define discretionary/mandatory
         // same-as constraints, we add the corresponding decorators
         let triangular_same_as_decorators =
-            self.generate_triangular_same_as_decorators(workspace, database);
+            self.generate_triangular_same_as_decorators(workspace, database)?;
 
         // Generate the default decorator if the column has a default value
         let default_decorator = self.generate_default_decorator(workspace, database)?;
 
         // If the column has no check constraints, we can mark it as infallible
-        let infallible_decorator = if !self.has_non_tautological_check_constraints(database)
-            && table.has_non_tautological_check_constraints_in_hierarchy(database)
-            && !self.is_surrogate_key(database)
+        let infallible_decorator = if !self.has_non_tautological_check_constraints(database)?
+            && table.has_non_tautological_check_constraints_in_hierarchy(database)?
+            && !self.is_surrogate_key(database)?
         {
             Some(quote! {
                 #[infallible]
@@ -637,7 +682,7 @@ pub trait ColumnSynLike: ColumnLike {
             None
         };
 
-        let rust_type = if self.is_nullable(database) {
+        let rust_type = if self.is_nullable(database)? {
             syn::parse_quote!(Option<#rust_type>)
         } else {
             rust_type.clone()

@@ -30,4 +30,10 @@ pub enum Error {
     #[error("Invalid TOML dependency: {0}")]
     /// Invalid TOML dependency error.
     InvalidTomlDependency(String),
+    #[error("Schema lookup failed: {0}")]
+    /// A schema object could not be resolved in the database.
+    Lookup(#[from] sql_traits::errors::LookupError),
+    #[error("Schema analysis failed: {0}")]
+    /// The schema could not be analysed, for instance ordered into a DAG.
+    Schema(#[from] sql_traits::errors::Error),
 }

@@ -1,7 +1,10 @@
 //! Submodule providing the `HorizontalSameAsColumnLike` trait for working
 //! with columns that have horizontal same-as relationships.
 
-use sql_traits::traits::{ColumnLike, DatabaseLike, ForeignKeyLike};
+use sql_traits::{
+    errors::LookupError,
+    traits::{ColumnLike, DatabaseLike, ForeignKeyLike},
+};
 
 use crate::traits::HorizontalSameAsForeignKeyLike;
 /// Trait for tables which may include horizontal same-as relationships.
@@ -38,25 +41,44 @@ where
     /// );
     ///   ",
     /// )?;
-    /// let left_table = db.table(None, "left").unwrap();
-    /// let right_id_column =
-    ///     left_table.column("right_id", &db).expect("Column 'right_id' should exist");
-    /// assert_eq!(right_id_column.horizontal_same_as_foreign_keys(&db).count(), 2);
-    /// let name_column = left_table.column("name", &db).expect("Column 'name' should exist");
-    /// let age_column = left_table.column("age", &db).expect("Column 'age' should exist");
-    /// assert_eq!(name_column.horizontal_same_as_foreign_keys(&db).count(), 1);
-    /// assert_eq!(age_column.horizontal_same_as_foreign_keys(&db).count(), 1);
+    /// let left_table =
+    ///     db.table_by_target(TargetName::new("left", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let right_id_column = left_table
+    ///     .column("right_id", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'right_id' should exist");
+    /// assert_eq!(right_id_column.horizontal_same_as_foreign_keys(&db)?.count(), 2);
+    /// let name_column = left_table
+    ///     .column("name", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'name' should exist");
+    /// let age_column = left_table
+    ///     .column("age", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'age' should exist");
+    /// assert_eq!(name_column.horizontal_same_as_foreign_keys(&db)?.count(), 1);
+    /// assert_eq!(age_column.horizontal_same_as_foreign_keys(&db)?.count(), 1);
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the foreign keys of the table or their
+    /// columns cannot be resolved.
     fn horizontal_same_as_foreign_keys<'db>(
         &'db self,
         database: &'db Self::DB,
-    ) -> impl Iterator<Item = &'db <Self::DB as DatabaseLike>::ForeignKey> {
+    ) -> Result<impl Iterator<Item = &'db <Self::DB as DatabaseLike>::ForeignKey>, LookupError>
+    {
         use crate::traits::same_as::HorizontalSameAsTableLike;
-        self.table(database)
-            .horizontal_same_as_foreign_keys(database)
-            .filter(move |fk| fk.host_columns(database).any(|col| col == self.borrow()))
+        let mut foreign_keys = Vec::new();
+        for foreign_key in self.table(database).horizontal_same_as_foreign_keys(database)? {
+            for host_column in foreign_key.host_columns(database)? {
+                if host_column == self.borrow() {
+                    foreign_keys.push(foreign_key);
+                    break;
+                }
+            }
+        }
+        Ok(foreign_keys.into_iter())
     }
 
     /// Returns whether the column has any horizontal same-as foreign key.
@@ -84,16 +106,26 @@ where
     /// );
     ///   ",
     /// )?;
-    /// let left_table = db.table(None, "left").unwrap();
-    /// let name_column = left_table.column("name", &db).expect("Column 'name' should exist");
-    /// let age_column = left_table.column("age", &db).expect("Column 'age' should exist");
-    /// assert!(name_column.has_horizontal_same_as_foreign_key(&db));
-    /// assert!(age_column.has_horizontal_same_as_foreign_key(&db));
+    /// let left_table =
+    ///     db.table_by_target(TargetName::new("left", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let name_column = left_table
+    ///     .column("name", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'name' should exist");
+    /// let age_column = left_table
+    ///     .column("age", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'age' should exist");
+    /// assert!(name_column.has_horizontal_same_as_foreign_key(&db)?);
+    /// assert!(age_column.has_horizontal_same_as_foreign_key(&db)?);
     /// # Ok(())
     /// # }
     /// ```
-    fn has_horizontal_same_as_foreign_key(&self, database: &Self::DB) -> bool {
-        self.horizontal_same_as_foreign_keys(database).next().is_some()
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the foreign keys of the table or their
+    /// columns cannot be resolved.
+    fn has_horizontal_same_as_foreign_key(&self, database: &Self::DB) -> Result<bool, LookupError> {
+        Ok(self.horizontal_same_as_foreign_keys(database)?.next().is_some())
     }
 }
 

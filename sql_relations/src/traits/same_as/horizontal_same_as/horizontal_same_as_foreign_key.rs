@@ -2,7 +2,7 @@
 //! determining whether a foreign key relationship is a horizontal same-as
 //! relationship.
 
-use sql_traits::traits::DatabaseLike;
+use sql_traits::{errors::LookupError, traits::DatabaseLike};
 
 use crate::traits::{SameAsIndexLike, VerticalSameAsForeignKeyLike};
 
@@ -35,34 +35,40 @@ pub trait HorizontalSameAsForeignKeyLike: VerticalSameAsForeignKeyLike {
     /// );
     /// ",
     /// )?;
-    /// let child_table = db.table(None, "child").unwrap();
+    /// let child_table =
+    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
     /// let [extension_primary_key, parent_fk, brother_fk] =
-    ///     child_table.foreign_keys(&db).collect::<Vec<_>>()[..]
+    ///     child_table.foreign_keys(&db)?.collect::<Vec<_>>()[..]
     /// else {
     ///     panic!("Expected exactly 3 foreign keys in child table");
     /// };
     ///
-    /// assert!(extension_primary_key.is_extension_foreign_key(&db), "Expected extension primary key");
+    /// assert!(extension_primary_key.is_extension_foreign_key(&db)?, "Expected extension primary key");
     /// assert!(
-    ///     !parent_fk.is_horizontal_same_as(&db),
+    ///     !parent_fk.is_horizontal_same_as(&db)?,
     ///     "Expected parent foreign key to not be horizontal same-as"
     /// );
     /// assert!(
-    ///     brother_fk.is_horizontal_same_as(&db),
+    ///     brother_fk.is_horizontal_same_as(&db)?,
     ///     "Expected brother foreign key to be horizontal same-as"
     /// );
     /// # Ok(())
     /// # }
     /// ```
-    fn is_horizontal_same_as(&self, database: &Self::DB) -> bool {
-        let Some(unique_index) = self.is_referenced_unique_key(database) else {
-            return false;
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the columns, the referenced table or its
+    /// unique indices cannot be resolved.
+    fn is_horizontal_same_as(&self, database: &Self::DB) -> Result<bool, LookupError> {
+        let Some(unique_index) = self.is_referenced_unique_key(database)? else {
+            return Ok(false);
         };
 
-        unique_index.is_same_as(database)
-            && !self.is_vertical_same_as(database)
-            && !self.is_self_referential(database)
-            && !self.references_ancestor_table(database)
+        Ok(unique_index.is_same_as(database)?
+            && !self.is_vertical_same_as(database)?
+            && !self.is_self_referential(database)?
+            && !self.references_ancestor_table(database)?)
     }
 
     /// Returns the tuple of host-referenced column pairs for this horizontal
@@ -91,32 +97,38 @@ pub trait HorizontalSameAsForeignKeyLike: VerticalSameAsForeignKeyLike {
     /// );
     /// ",
     /// )?;
-    /// let parent_table = db.table(None, "parent").unwrap();
-    /// let brother_table = db.table(None, "brother").unwrap();
+    /// let parent_table =
+    ///     db.table_by_target(TargetName::new("parent", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let brother_table =
+    ///     db.table_by_target(TargetName::new("brother", false), IdentifierCase::AsWritten)?.unwrap();
     /// let brother_name = brother_table
-    ///     .column("brother_name", &db)
+    ///     .column("brother_name", &db, IdentifierCase::AsWritten)?
     ///     .expect("Column 'brother_name' should exist in brother table");
-    /// let child_table = db.table(None, "child").unwrap();
+    /// let child_table =
+    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
     /// let child_name = child_table
-    ///     .column("child_name", &db)
+    ///     .column("child_name", &db, IdentifierCase::AsWritten)?
     ///     .expect("Column 'child_name' should exist in child table");
     /// let brother_id = child_table
-    ///     .column("brother_id", &db)
+    ///     .column("brother_id", &db, IdentifierCase::AsWritten)?
     ///     .expect("Column 'brother_id' should exist in child table");
-    /// let foreign_keys = child_table.foreign_keys(&db).collect::<Vec<_>>();
+    /// let foreign_keys = child_table.foreign_keys(&db)?.collect::<Vec<_>>();
     /// let [pk_fk, brother_fk, vertical_fk, horizontal_fk] = &foreign_keys.as_slice() else {
     ///     panic!("Expected exactly 4 foreign keys in child table, got {}", foreign_keys.len());
     /// };
-    /// assert!(pk_fk.is_extension_foreign_key(&db), "Expected extension primary key");
-    /// assert!(!brother_fk.is_extension_foreign_key(&db), "Expected non-extension foreign key");
-    /// assert!(!brother_fk.is_vertical_same_as(&db), "Expected non-vertical same-as foreign key");
-    /// assert!(vertical_fk.is_vertical_same_as(&db), "Expected vertical same-as foreign key");
-    /// assert!(!vertical_fk.is_horizontal_same_as(&db), "Expected non-horizontal same-as foreign key");
-    /// assert!(horizontal_fk.is_horizontal_same_as(&db), "Expected horizontal same-as foreign key");
-    /// assert!(!horizontal_fk.is_vertical_same_as(&db), "Expected non-vertical same-as foreign key");
+    /// assert!(pk_fk.is_extension_foreign_key(&db)?, "Expected extension primary key");
+    /// assert!(!brother_fk.is_extension_foreign_key(&db)?, "Expected non-extension foreign key");
+    /// assert!(!brother_fk.is_vertical_same_as(&db)?, "Expected non-vertical same-as foreign key");
+    /// assert!(vertical_fk.is_vertical_same_as(&db)?, "Expected vertical same-as foreign key");
+    /// assert!(
+    ///     !vertical_fk.is_horizontal_same_as(&db)?,
+    ///     "Expected non-horizontal same-as foreign key"
+    /// );
+    /// assert!(horizontal_fk.is_horizontal_same_as(&db)?, "Expected horizontal same-as foreign key");
+    /// assert!(!horizontal_fk.is_vertical_same_as(&db)?, "Expected non-vertical same-as foreign key");
     ///
     /// assert_eq!(
-    ///     horizontal_fk.horizontal_same_as_column_pair(&db),
+    ///     horizontal_fk.horizontal_same_as_column_pair(&db)?,
     ///     Some((brother_id, child_name, brother_name)),
     ///     "Expected horizontal same-as column pair to be (brother.name, child.name)"
     /// );
@@ -124,28 +136,36 @@ pub trait HorizontalSameAsForeignKeyLike: VerticalSameAsForeignKeyLike {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the host or referenced columns cannot be
+    /// resolved.
     #[allow(clippy::type_complexity)]
     fn horizontal_same_as_column_pair<'db>(
         &'db self,
         database: &'db Self::DB,
-    ) -> Option<(
-        &'db <Self::DB as DatabaseLike>::Column,
-        &'db <Self::DB as DatabaseLike>::Column,
-        &'db <Self::DB as DatabaseLike>::Column,
-    )> {
-        if !self.is_horizontal_same_as(database) {
-            return None;
+    ) -> Result<
+        Option<(
+            &'db <Self::DB as DatabaseLike>::Column,
+            &'db <Self::DB as DatabaseLike>::Column,
+            &'db <Self::DB as DatabaseLike>::Column,
+        )>,
+        LookupError,
+    > {
+        if !self.is_horizontal_same_as(database)? {
+            return Ok(None);
         }
 
-        let host_columns = self.host_columns(database).collect::<Vec<_>>();
+        let host_columns = self.host_columns(database)?.collect::<Vec<_>>();
         let [host_fk_column, host_column] = host_columns.as_slice() else {
-            return None;
+            return Ok(None);
         };
-        let referenced_columns = self.referenced_columns(database).collect::<Vec<_>>();
+        let referenced_columns = self.referenced_columns(database)?.collect::<Vec<_>>();
         let [_foreign_pk, referenced_column] = referenced_columns.as_slice() else {
-            return None;
+            return Ok(None);
         };
-        Some((host_fk_column, host_column, referenced_column))
+        Ok(Some((host_fk_column, host_column, referenced_column)))
     }
 }
 

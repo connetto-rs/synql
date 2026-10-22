@@ -1,7 +1,10 @@
 //! Submodule defining the `SameAsTable` trait which provides methods for
 //! tables which include same-as relationships.
 
-use sql_traits::traits::{DatabaseLike, TableLike};
+use sql_traits::{
+    errors::LookupError,
+    traits::{DatabaseLike, TableLike},
+};
 
 use crate::traits::SameAsIndexLike;
 
@@ -31,24 +34,49 @@ where
     /// CREATE TABLE no_same_as_two (id INT PRIMARY KEY);
     /// ",
     /// )?;
-    /// let table_with_same_as = db.table(None, "with_same_as").unwrap();
-    /// let same_as_indices = table_with_same_as.same_as_indices(&db).collect::<Vec<_>>();
+    /// let table_with_same_as = db
+    ///     .table_by_target(TargetName::new("with_same_as", false), IdentifierCase::AsWritten)?
+    ///     .unwrap();
+    /// let same_as_indices = table_with_same_as.same_as_indices(&db)?.collect::<Vec<_>>();
     /// assert_eq!(same_as_indices.len(), 1, "Expected exactly one same-as index");
-    /// let table_no_same_as_one = db.table(None, "no_same_as_one").unwrap();
-    /// assert_eq!(table_no_same_as_one.same_as_indices(&db).count(), 0, "Expected no same-as indices");
-    /// let table_no_same_as_two = db.table(None, "no_same_as_two").unwrap();
-    /// assert_eq!(table_no_same_as_two.same_as_indices(&db).count(), 0, "Expected no same-as indices");
+    /// let table_no_same_as_one = db
+    ///     .table_by_target(TargetName::new("no_same_as_one", false), IdentifierCase::AsWritten)?
+    ///     .unwrap();
+    /// assert_eq!(
+    ///     table_no_same_as_one.same_as_indices(&db)?.count(),
+    ///     0,
+    ///     "Expected no same-as indices"
+    /// );
+    /// let table_no_same_as_two = db
+    ///     .table_by_target(TargetName::new("no_same_as_two", false), IdentifierCase::AsWritten)?
+    ///     .unwrap();
+    /// assert_eq!(
+    ///     table_no_same_as_two.same_as_indices(&db)?.count(),
+    ///     0,
+    ///     "Expected no same-as indices"
+    /// );
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the unique indices of the table or their
+    /// columns cannot be resolved.
     fn same_as_indices<'db>(
         &'db self,
         database: &'db Self::DB,
-    ) -> impl Iterator<Item = &'db <Self::DB as DatabaseLike>::UniqueIndex>
+    ) -> Result<impl Iterator<Item = &'db <Self::DB as DatabaseLike>::UniqueIndex>, LookupError>
     where
         Self: 'db,
     {
-        self.unique_indices(database).filter(|index| index.is_same_as(database))
+        let mut indices = Vec::new();
+        for index in self.unique_indices(database)? {
+            if index.is_same_as(database)? {
+                indices.push(index);
+            }
+        }
+        Ok(indices.into_iter())
     }
 }
 

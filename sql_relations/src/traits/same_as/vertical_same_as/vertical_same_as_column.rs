@@ -1,12 +1,12 @@
 //! Submodule providing the `VerticalSameAsColumnLike` trait for working
 //! with columns that have vertical same-as relationships.
 
-use std::{
-    borrow::Borrow,
-    collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 
-use sql_traits::traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike};
+use sql_traits::{
+    errors::LookupError,
+    traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike},
+};
 
 use crate::traits::VerticalSameAsForeignKeyLike;
 /// Trait for tables which may include vertical same-as relationships.
@@ -40,22 +40,40 @@ where
     ///     );
     ///   ",
     /// )?;
-    /// let child_table = db.table(None, "child").unwrap();
-    /// let name_column = child_table.column("name", &db).expect("Column 'name' should exist");
-    /// let age_column = child_table.column("age", &db).expect("Column 'age' should exist");
-    /// assert_eq!(name_column.vertical_same_as_foreign_keys(&db).count(), 1);
-    /// assert_eq!(age_column.vertical_same_as_foreign_keys(&db).count(), 1);
+    /// let child_table =
+    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let name_column = child_table
+    ///     .column("name", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'name' should exist");
+    /// let age_column = child_table
+    ///     .column("age", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'age' should exist");
+    /// assert_eq!(name_column.vertical_same_as_foreign_keys(&db)?.count(), 1);
+    /// assert_eq!(age_column.vertical_same_as_foreign_keys(&db)?.count(), 1);
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the foreign keys of the table or their
+    /// columns cannot be resolved.
     fn vertical_same_as_foreign_keys<'db>(
         &'db self,
         database: &'db Self::DB,
-    ) -> impl Iterator<Item = &'db <Self::DB as DatabaseLike>::ForeignKey> {
+    ) -> Result<impl Iterator<Item = &'db <Self::DB as DatabaseLike>::ForeignKey>, LookupError>
+    {
         use crate::traits::same_as::vertical_same_as::vertical_same_as_table::VerticalSameAsTableLike;
-        self.table(database)
-            .vertical_same_as_foreign_keys(database)
-            .filter(move |fk| fk.host_columns(database).any(|col| col == self.borrow()))
+        let mut foreign_keys = Vec::new();
+        for foreign_key in self.table(database).vertical_same_as_foreign_keys(database)? {
+            for host_column in foreign_key.host_columns(database)? {
+                if host_column == self.borrow() {
+                    foreign_keys.push(foreign_key);
+                    break;
+                }
+            }
+        }
+        Ok(foreign_keys.into_iter())
     }
 
     /// Returns the set of columns that are directly vertically same-as this
@@ -84,24 +102,45 @@ where
     ///     );
     ///   ",
     /// )?;
-    /// let child_table = db.table(None, "child").unwrap();
-    /// let name_column = child_table.column("name", &db).expect("Column 'name' should exist");
-    /// let age_column = child_table.column("age", &db).expect("Column 'age' should exist");
-    /// let parent_table = db.table(None, "parent").unwrap();
-    /// let parent_name_column = parent_table.column("name", &db).expect("Column 'name' should exist");
-    /// let parent_age_column = parent_table.column("age", &db).expect("Column 'age' should exist");
-    /// assert_eq!(name_column.vertical_same_as_columns(&db), vec![parent_name_column]);
-    /// assert_eq!(age_column.vertical_same_as_columns(&db), vec![parent_age_column]);
+    /// let child_table =
+    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let name_column = child_table
+    ///     .column("name", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'name' should exist");
+    /// let age_column = child_table
+    ///     .column("age", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'age' should exist");
+    /// let parent_table =
+    ///     db.table_by_target(TargetName::new("parent", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let parent_name_column = parent_table
+    ///     .column("name", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'name' should exist");
+    /// let parent_age_column = parent_table
+    ///     .column("age", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'age' should exist");
+    /// assert_eq!(name_column.vertical_same_as_columns(&db)?, vec![parent_name_column]);
+    /// assert_eq!(age_column.vertical_same_as_columns(&db)?, vec![parent_age_column]);
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the foreign keys of the table or their
+    /// columns cannot be resolved.
     fn vertical_same_as_columns<'db>(
         &'db self,
         database: &'db Self::DB,
-    ) -> Vec<&'db <Self::DB as DatabaseLike>::Column> {
-        self.vertical_same_as_foreign_keys(database)
-            .map(|fk| fk.referenced_column_for_host_column(database, self.borrow()))
-            .collect()
+    ) -> Result<Vec<&'db <Self::DB as DatabaseLike>::Column>, LookupError> {
+        let mut columns = Vec::new();
+        for foreign_key in self.vertical_same_as_foreign_keys(database)? {
+            if let Some(column) =
+                foreign_key.referenced_column_for_host_column(database, self.borrow())?
+            {
+                columns.push(column);
+            }
+        }
+        Ok(columns)
     }
 
     /// Returns the set of columns that are reachable from this column via
@@ -133,33 +172,39 @@ where
     ///     );
     ///   ",
     /// )?;
-    /// let child_table = db.table(None, "child").unwrap();
-    /// let child_name_column =
-    ///     child_table.column("child_name", &db).expect("Column 'child_name' should exist");
-    /// let grandparent_table = db.table(None, "grandparent").unwrap();
-    /// let grandparent_name_column =
-    ///     grandparent_table.column("name", &db).expect("Column 'name' should exist");
+    /// let child_table =
+    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let child_name_column = child_table
+    ///     .column("child_name", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'child_name' should exist");
+    /// let grandparent_table = db
+    ///     .table_by_target(TargetName::new("grandparent", false), IdentifierCase::AsWritten)?
+    ///     .unwrap();
+    /// let grandparent_name_column = grandparent_table
+    ///     .column("name", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'name' should exist");
     /// assert_eq!(
-    ///     child_name_column.vertical_same_as_reachable_set(&db).into_iter().collect::<Vec<_>>(),
+    ///     child_name_column.vertical_same_as_reachable_set(&db)?.into_iter().collect::<Vec<_>>(),
     ///     vec![grandparent_name_column]
     /// );
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the foreign keys of the traversed tables
+    /// or their columns cannot be resolved.
     fn vertical_same_as_reachable_set<'db>(
         &'db self,
         database: &'db Self::DB,
-    ) -> HashSet<&'db <Self::DB as DatabaseLike>::Column> {
+    ) -> Result<HashSet<&'db <Self::DB as DatabaseLike>::Column>, LookupError> {
         let mut reachable_set = HashSet::new();
-        for vertical_same_as_foreign_key in
-            self.vertical_same_as_foreign_keys(database).map(Borrow::borrow)
-        {
-            let same_as_column = vertical_same_as_foreign_key
-                .referenced_column_for_host_column(database, self.borrow());
-            reachable_set.extend(same_as_column.vertical_same_as_reachable_set(database));
+        for same_as_column in self.vertical_same_as_columns(database)? {
+            reachable_set.extend(same_as_column.vertical_same_as_reachable_set(database)?);
             reachable_set.insert(same_as_column);
         }
-        reachable_set
+        Ok(reachable_set)
     }
 
     /// Returns all columns that are vertically same-as this column, including
@@ -191,61 +236,57 @@ where
     ///     );
     ///   ",
     /// )?;
-    /// let child_table = db.table(None, "child").unwrap();
-    /// let child_name_column =
-    ///     child_table.column("child_name", &db).expect("Column 'child_name' should exist");
-    /// let parent_table = db.table(None, "parent").unwrap();
-    /// let parent_name_column =
-    ///     parent_table.column("parent_name", &db).expect("Column 'parent_name' should exist");
-    /// let grandparent_table = db.table(None, "grandparent").unwrap();
-    /// let grandparent_name_column =
-    ///     grandparent_table.column("name", &db).expect("Column 'name' should exist");
-    /// assert_eq!(child_name_column.dominant_vertical_same_as_columns(&db), vec![parent_name_column]);
+    /// let child_table =
+    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let child_name_column = child_table
+    ///     .column("child_name", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'child_name' should exist");
+    /// let parent_table =
+    ///     db.table_by_target(TargetName::new("parent", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let parent_name_column = parent_table
+    ///     .column("parent_name", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'parent_name' should exist");
+    /// let grandparent_table = db
+    ///     .table_by_target(TargetName::new("grandparent", false), IdentifierCase::AsWritten)?
+    ///     .unwrap();
+    /// let grandparent_name_column = grandparent_table
+    ///     .column("name", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'name' should exist");
+    /// assert_eq!(child_name_column.dominant_vertical_same_as_columns(&db)?, vec![parent_name_column]);
     /// # Ok(())
     /// # }
     /// ```
-    #[allow(clippy::unnecessary_to_owned)]
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the ancestral tables, their columns or
+    /// their foreign keys cannot be resolved.
     fn dominant_vertical_same_as_columns<'db>(
         &'db self,
         database: &'db Self::DB,
-    ) -> Vec<&'db <Self::DB as DatabaseLike>::Column>
+    ) -> Result<Vec<&'db <Self::DB as DatabaseLike>::Column>, LookupError>
     where
         Self: 'db,
     {
-        let mut reachable_set: HashSet<&'db <Self::DB as DatabaseLike>::Column> =
-            self.vertical_same_as_reachable_set(database).into_iter().collect();
-        // The frontier contains the set of columns which so far can only be
-        // reached from the current column. Once a column in the
-        // frontier is found to be reachable from another column in the
-        // reachable set, it is marked as true and will not be used to
-        // expand the reachable set anymore.
+        let mut reachable_set = self.vertical_same_as_reachable_set(database)?;
+        // A frontier column flips to true once another reachable column also
+        // reaches it.
         let mut frontier: HashMap<&'db <Self::DB as DatabaseLike>::Column, bool> =
-            self.vertical_same_as_columns(database).into_iter().map(|c| (c, false)).collect();
-        let table: &'db <Self::DB as DatabaseLike>::Table = self.table(database);
-        let vertical_extension_tables: Vec<&'db <Self::DB as DatabaseLike>::Table> =
-            table.ancestral_extended_tables(database);
+            self.vertical_same_as_columns(database)?.into_iter().map(|c| (c, false)).collect();
+        let vertical_extension_tables = self.table(database).ancestral_extended_tables(database)?;
         let mut changed = true;
 
         while changed {
             changed = false;
-            for ancestor in vertical_extension_tables.iter().copied() {
-                for ancestor_column in ancestor.columns(database) {
-                    let ancestor_column: &'db <Self::DB as DatabaseLike>::Column = ancestor_column;
-                    // If the ancestor node is already in the reachable set,
-                    // skip it.
+            for &ancestor in &vertical_extension_tables {
+                for ancestor_column in ancestor.columns(database)? {
                     if reachable_set.contains(ancestor_column) {
                         continue;
                     }
 
-                    let ancestor_reachable_set: HashSet<&'db <Self::DB as DatabaseLike>::Column> =
-                        ancestor_column
-                            .vertical_same_as_reachable_set(database)
-                            .into_iter()
-                            .collect();
+                    let ancestor_reachable_set =
+                        ancestor_column.vertical_same_as_reachable_set(database)?;
 
-                    // We update the frontier to mark as true columns which we
-                    // have now discovered can be reached
-                    // also from this ancestor column.
                     for (frontier_column, is_reachable) in &mut frontier {
                         if !*is_reachable && ancestor_reachable_set.contains(frontier_column) {
                             *is_reachable = true;
@@ -253,13 +294,8 @@ where
                         }
                     }
 
-                    // If the ancestor reachable set intersects with the current
-                    // reachable set, then the ancestor
-                    // column is inferred to be vertically same-as
-                    // the current column. We then merge the ancestor reachable
-                    // set into the current reachable set,
-                    // and add the ancestor column to the
-                    // frontier.
+                    // Sharing a reachable column makes the ancestor column
+                    // vertically same-as.
                     if !reachable_set.is_disjoint(&ancestor_reachable_set) {
                         reachable_set.insert(ancestor_column);
                         frontier.insert(ancestor_column, false);
@@ -270,18 +306,13 @@ where
             }
         }
 
-        // We then consider as vertically same-as only those columns in the
-        // frontier which are still marked as false, meaning they could
-        // not be reached from any other column in the reachable set.
-        let mut vertical_same_as_columns: Vec<
-            &'db <<Self as ColumnLike>::DB as DatabaseLike>::Column,
-        > = frontier
+        let mut vertical_same_as_columns = frontier
             .into_iter()
             .filter_map(|(column, is_reachable)| if is_reachable { None } else { Some(column) })
             .collect::<Vec<_>>();
         vertical_same_as_columns.sort_unstable();
 
-        vertical_same_as_columns
+        Ok(vertical_same_as_columns)
     }
 }
 

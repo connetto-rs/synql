@@ -33,7 +33,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
 
         let mut re_exports = Vec::new();
         for table in tables {
-            if self.skip_table(table) {
+            if self.skip_table(table)? {
                 continue;
             }
             let crate_ident = table.crate_ident(workspace);

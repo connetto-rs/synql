@@ -1,7 +1,10 @@
 //! Submodule providing the `HorizontalSameAsTableLike` trait for working
 //! with tables that have horizontal same-as relationships.
 
-use sql_traits::traits::{DatabaseLike, TableLike};
+use sql_traits::{
+    errors::LookupError,
+    traits::{DatabaseLike, TableLike},
+};
 
 use crate::traits::HorizontalSameAsForeignKeyLike;
 
@@ -36,9 +39,10 @@ where
     /// );
     /// ",
     /// )?;
-    /// let child_table = db.table(None, "child").unwrap();
+    /// let child_table =
+    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
     /// let horizontal_same_as_fks =
-    ///     child_table.horizontal_same_as_foreign_keys(&db).collect::<Vec<_>>();
+    ///     child_table.horizontal_same_as_foreign_keys(&db)?.collect::<Vec<_>>();
     /// assert_eq!(
     ///     horizontal_same_as_fks.len(),
     ///     1,
@@ -47,14 +51,25 @@ where
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the foreign keys of the table cannot be
+    /// resolved.
     fn horizontal_same_as_foreign_keys<'db>(
         &'db self,
         database: &'db Self::DB,
-    ) -> impl Iterator<Item = &'db <Self::DB as DatabaseLike>::ForeignKey>
+    ) -> Result<impl Iterator<Item = &'db <Self::DB as DatabaseLike>::ForeignKey>, LookupError>
     where
         Self: 'db,
     {
-        self.foreign_keys(database).filter(|fk| fk.is_horizontal_same_as(database))
+        let mut foreign_keys = Vec::new();
+        for foreign_key in self.foreign_keys(database)? {
+            if foreign_key.is_horizontal_same_as(database)? {
+                foreign_keys.push(foreign_key);
+            }
+        }
+        Ok(foreign_keys.into_iter())
     }
 
     /// Returns whether the table has any horizontal same-as foreign keys.
@@ -81,17 +96,30 @@ where
     /// );
     /// ",
     /// )?;
-    /// let child_table = db.table(None, "child").unwrap();
-    /// let parent_table = db.table(None, "parent").unwrap();
-    /// let brother_table = db.table(None, "brother").unwrap();
-    /// assert!(child_table.has_horizontal_same_as(&db));
-    /// assert!(!parent_table.has_horizontal_same_as(&db));
-    /// assert!(!brother_table.has_horizontal_same_as(&db));
+    /// let child_table =
+    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let parent_table =
+    ///     db.table_by_target(TargetName::new("parent", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let brother_table =
+    ///     db.table_by_target(TargetName::new("brother", false), IdentifierCase::AsWritten)?.unwrap();
+    /// assert!(child_table.has_horizontal_same_as(&db)?);
+    /// assert!(!parent_table.has_horizontal_same_as(&db)?);
+    /// assert!(!brother_table.has_horizontal_same_as(&db)?);
     /// # Ok(())
     /// # }
     /// ```
-    fn has_horizontal_same_as(&self, database: &Self::DB) -> bool {
-        self.horizontal_same_as_foreign_keys(database).next().is_some()
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the foreign keys of the table cannot be
+    /// resolved.
+    fn has_horizontal_same_as(&self, database: &Self::DB) -> Result<bool, LookupError> {
+        for foreign_key in self.foreign_keys(database)? {
+            if foreign_key.is_horizontal_same_as(database)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 

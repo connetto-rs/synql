@@ -1,7 +1,10 @@
 //! Submodule providing the `VerticalSameAsTableLike` trait for working
 //! with tables that have vertical same-as relationships.
 
-use sql_traits::traits::{DatabaseLike, TableLike};
+use sql_traits::{
+    errors::LookupError,
+    traits::{DatabaseLike, TableLike},
+};
 
 use crate::traits::VerticalSameAsForeignKeyLike;
 
@@ -36,20 +39,32 @@ where
     /// );
     /// ",
     /// )?;
-    /// let child_table = db.table(None, "child").unwrap();
-    /// let vertical_same_as_fks = child_table.vertical_same_as_foreign_keys(&db).collect::<Vec<_>>();
+    /// let child_table =
+    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let vertical_same_as_fks = child_table.vertical_same_as_foreign_keys(&db)?.collect::<Vec<_>>();
     /// assert_eq!(vertical_same_as_fks.len(), 1, "Expected exactly one vertical same-as foreign key");
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the foreign keys of the table cannot be
+    /// resolved.
     fn vertical_same_as_foreign_keys<'db>(
         &'db self,
         database: &'db Self::DB,
-    ) -> impl Iterator<Item = &'db <Self::DB as DatabaseLike>::ForeignKey>
+    ) -> Result<impl Iterator<Item = &'db <Self::DB as DatabaseLike>::ForeignKey>, LookupError>
     where
         Self: 'db,
     {
-        self.foreign_keys(database).filter(|fk| fk.is_vertical_same_as(database))
+        let mut foreign_keys = Vec::new();
+        for foreign_key in self.foreign_keys(database)? {
+            if foreign_key.is_vertical_same_as(database)? {
+                foreign_keys.push(foreign_key);
+            }
+        }
+        Ok(foreign_keys.into_iter())
     }
 
     /// Returns whether the table has any vertical same-as relationships.
@@ -74,21 +89,33 @@ where
     /// );
     /// ",
     /// )?;
-    /// let child_table = db.table(None, "child").unwrap();
-    /// let parent_table = db.table(None, "parent").unwrap();
+    /// let child_table =
+    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let parent_table =
+    ///     db.table_by_target(TargetName::new("parent", false), IdentifierCase::AsWritten)?.unwrap();
     /// assert!(
-    ///     child_table.has_vertical_same_as(&db),
+    ///     child_table.has_vertical_same_as(&db)?,
     ///     "Expected child table to have vertical same-as relationship"
     /// );
     /// assert!(
-    ///     !parent_table.has_vertical_same_as(&db),
+    ///     !parent_table.has_vertical_same_as(&db)?,
     ///     "Expected parent table to not have vertical same-as relationship"
     /// );
     /// # Ok(())
     /// # }
     /// ```
-    fn has_vertical_same_as(&self, database: &Self::DB) -> bool {
-        self.vertical_same_as_foreign_keys(database).next().is_some()
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the foreign keys of the table cannot be
+    /// resolved.
+    fn has_vertical_same_as(&self, database: &Self::DB) -> Result<bool, LookupError> {
+        for foreign_key in self.foreign_keys(database)? {
+            if foreign_key.is_vertical_same_as(database)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 

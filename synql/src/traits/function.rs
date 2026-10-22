@@ -24,7 +24,7 @@ pub trait FunctionSynLike: FunctionLike {
     ) -> impl Iterator<Item = Option<ExternalTypeRef<'workspace>>> {
         self.normalized_argument_type_names(database)
             .into_iter()
-            .map(move |arg_type_name| workspace.external_postgres_type(arg_type_name))
+            .map(move |arg_type_name| workspace.external_postgres_type(&arg_type_name))
     }
 
     /// Returns the type ref curresponding to the return type of the
@@ -39,7 +39,7 @@ pub trait FunctionSynLike: FunctionLike {
         database: &Self::DB,
     ) -> Option<ExternalTypeRef<'workspace>> {
         self.normalized_return_type_name(database)
-            .and_then(|ret_type_name| workspace.external_postgres_type(ret_type_name))
+            .and_then(|ret_type_name| workspace.external_postgres_type(&ret_type_name))
     }
 
     /// Returns the external function reference for this function, if any.

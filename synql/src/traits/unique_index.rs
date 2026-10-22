@@ -3,7 +3,7 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use sql_traits::traits::UniqueIndexLike;
+use sql_traits::{errors::LookupError, traits::UniqueIndexLike};
 
 use crate::traits::{ColumnSynLike, TableSynLike};
 
@@ -12,15 +12,20 @@ use crate::traits::{ColumnSynLike, TableSynLike};
 pub trait UniqueIndexSynLike: UniqueIndexLike {
     /// Converts the unique index to its Syn representation,
     /// using the `diesel-builders` crate.
-    fn to_syn(&self, database: &Self::DB) -> TokenStream {
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the columns of the index cannot be
+    /// resolved.
+    fn to_syn(&self, database: &Self::DB) -> Result<TokenStream, LookupError> {
         let table_ident = self.table(database).table_ident();
         let column_idents =
-            self.columns(database).map(ColumnSynLike::column_snake_ident).map(|ident| {
+            self.columns(database)?.map(ColumnSynLike::column_snake_ident).map(|ident| {
                 quote! {#table_ident::#ident}
             });
-        quote! {
+        Ok(quote! {
             ::diesel_builders::prelude::unique_index!(#(#column_idents),*);
-        }
+        })
     }
 }
 

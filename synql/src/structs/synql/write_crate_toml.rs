@@ -37,13 +37,13 @@ edition.workspace = true
 
         // If the table has check constraints, it will require the
         // `validation_errors` crate.
-        if table.has_non_tautological_check_constraints_in_hierarchy(self.database) {
+        if table.has_non_tautological_check_constraints_in_hierarchy(self.database)? {
             writeln!(buffer, "validation-errors.workspace = true")?;
         }
 
         // The crate might have external dependencies relative to the types it
         // uses and the function employed in its check constraints.
-        for external_crate in table.external_crates(self.database, workspace) {
+        for external_crate in table.external_crates(self.database, workspace)? {
             let crate_name = external_crate.name();
             if crate_name == "serde"
                 || crate_name == "std"
@@ -58,10 +58,10 @@ edition.workspace = true
 
         // We include the crates associated to tables this table depends on
         let mut dependencies = table
-            .referenced_tables(self.database)
+            .referenced_tables(self.database)?
             .into_iter()
-            .chain(table.ancestral_extended_tables(self.database))
-            .chain(table.spouses(self.database).filter(|spouse| table < *spouse))
+            .chain(table.ancestral_extended_tables(self.database)?)
+            .chain(table.spouses(self.database)?.filter(|spouse| table < *spouse))
             .collect::<Vec<_>>();
 
         dependencies.sort_unstable();
@@ -72,7 +72,7 @@ edition.workspace = true
             if dependency.borrow() == table {
                 continue;
             }
-            if self.skip_table(dependency) {
+            if self.skip_table(dependency)? {
                 continue;
             }
             let dep_crate_name = dependency.crate_name(workspace);
