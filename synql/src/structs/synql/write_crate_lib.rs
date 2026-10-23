@@ -60,6 +60,14 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
                 }
             });
 
+        let record_validation_impl =
+            table.generate_record_validation_impl(workspace, self.database)?;
+        let record_error_decorator = record_validation_impl.is_some().then(|| {
+            quote! {
+                #[table_model(record_error = ::validation_errors::ValidationError)]
+            }
+        });
+
         // #[diesel(primary_key(user_id, role_id))]
         let mut primary_key_decorator = None;
         let primary_key_columns = table.primary_key_columns(self.database)?.collect::<Vec<_>>();
@@ -90,19 +98,16 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             })
         };
 
-        let mut missing_allow_tables_to_appear_in_same_query = Vec::new();
-        for spouse_table in table.spouses(self.database)? {
-            // The macro is symmetric, so only the upper triangle is emitted.
-            if table > spouse_table || table.depends_on(self.database, spouse_table)? {
-                continue;
-            }
-
-            let spouse_table_crate_ident = spouse_table.crate_ident(workspace);
-            let spouse_table_ident = spouse_table.table_ident();
-            missing_allow_tables_to_appear_in_same_query.push(quote! {
+        // Each table pair that diesel queries together is declared once, by
+        // the crate depending on the other, as `crate_dependencies` assigns.
+        let mut allow_tables_to_appear_in_same_query = Vec::new();
+        for dependency in self.crate_dependencies(table)? {
+            let dependency_crate_ident = dependency.crate_ident(workspace);
+            let dependency_table_ident = dependency.table_ident();
+            allow_tables_to_appear_in_same_query.push(quote! {
                 ::diesel::allow_tables_to_appear_in_same_query!(
                     #table_ident,
-                    ::#spouse_table_crate_ident::#spouse_table_ident
+                    ::#dependency_crate_ident::#dependency_table_ident
                 );
             });
         }
@@ -144,6 +149,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             #[doc=#struct_documentation]
             #ancestor_decorator
             #error_decorator
+            #record_error_decorator
             #(#belonging_to_decorators)*
             #primary_key_decorator
             #surrogate_key_decorator
@@ -155,9 +161,10 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             }
             #(#unique_indices)*
             #(#check_constraint_impls)*
+            #record_validation_impl
             #(#ancestral_primary_key_column_getters)*
             #(#extra_implementations)*
-            #(#missing_allow_tables_to_appear_in_same_query)*
+            #(#allow_tables_to_appear_in_same_query)*
         };
 
         write!(buffer, "{content}")?;

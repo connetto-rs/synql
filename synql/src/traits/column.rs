@@ -469,40 +469,22 @@ pub trait ColumnSynLike: ColumnLike {
         })
     }
 
-    /// Generates the contextual validations for this column.
+    /// Returns whether a non-tautological check constraint of this column
+    /// involves this column alone.
     ///
     /// # Errors
     ///
-    /// Returns an error if validation generation fails.
-    fn generate_contextual_validations(
+    /// Returns an error if the check constraints cannot be resolved.
+    fn has_single_column_check_constraints(
         &self,
-        workspace: &Workspace,
         database: &Self::DB,
-    ) -> Result<Vec<proc_macro2::TokenStream>, crate::Error> {
-        let mut validations = vec![];
-        let table_has_surrogate_pk = self.table(database).has_surrogate_primary_key(database)?;
+    ) -> Result<bool, crate::Error> {
         for check_constraint in self.non_tautological_check_constraints(database)? {
             if check_constraint.number_of_columns(database)? <= 1 {
-                continue;
+                return Ok(true);
             }
-            if check_constraint.is_mutual_nullability_constraint(database) {
-                continue;
-            }
-
-            let mut skip_constraint = false;
-            for column in check_constraint.columns(database)? {
-                if column.is_primary_key(database)? && table_has_surrogate_pk {
-                    skip_constraint = true;
-                    break;
-                }
-            }
-            if skip_constraint {
-                continue;
-            }
-
-            validations.push(check_constraint.to_syn(database, workspace, &[self.borrow()])?);
         }
-        Ok(validations)
+        Ok(false)
     }
 
     /// Generates the context-less validations for this column.
@@ -552,7 +534,6 @@ pub trait ColumnSynLike: ColumnLike {
 
         let context_less_validations =
             self.generate_context_less_validations(workspace, database)?;
-        let contextual_validations = self.generate_contextual_validations(workspace, database)?;
 
         let context_less_validation = if context_less_validations.is_empty() {
             None
@@ -567,30 +548,6 @@ pub trait ColumnSynLike: ColumnLike {
             })
         };
 
-        let contextual_validation = if contextual_validations.is_empty() {
-            None
-        } else {
-            let include_context_less_call = if context_less_validations.is_empty() {
-                None
-            } else {
-                Some(quote! {
-                    <Self as ::diesel_builders::ValidateColumn<#table_ident::#column_ident>>::validate_column(
-                        #column_ident,
-                    )?;
-                })
-            };
-
-            Some(quote! {
-                #[inline]
-                fn validate_column_in_context(&self, #column_ident: &#rust_type) -> Result<(), Self::Error> {
-                    use diesel::Column;
-                    #include_context_less_call
-                    #(#contextual_validations)*
-                    Ok(())
-                }
-            })
-        };
-
         Ok(quote! {
             impl ::diesel_builders::ValidateColumn<#table_ident::#column_ident>
                 for <#table_ident::table as ::diesel_builders::TableExt>::NewValues
@@ -598,7 +555,6 @@ pub trait ColumnSynLike: ColumnLike {
                 type Error = ::validation_errors::ValidationError;
 
                 #context_less_validation
-                #contextual_validation
             }
         })
     }
@@ -670,8 +626,9 @@ pub trait ColumnSynLike: ColumnLike {
         // Generate the default decorator if the column has a default value
         let default_decorator = self.generate_default_decorator(workspace, database)?;
 
-        // If the column has no check constraints, we can mark it as infallible
-        let infallible_decorator = if !self.has_non_tautological_check_constraints(database)?
+        // A column without single-column check constraints never fails its own
+        // validation, since the record validates the multi-column ones.
+        let infallible_decorator = if !self.has_single_column_check_constraints(database)?
             && table.has_non_tautological_check_constraints_in_hierarchy(database)?
             && !self.is_surrogate_key(database)?
         {

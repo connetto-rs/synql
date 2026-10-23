@@ -26,8 +26,8 @@ use syn::Ident;
 use crate::{
     structs::{ExternalCrate, TomlDependency, Trait, Workspace},
     traits::{
-        ColumnSynLike, UniqueIndexSynLike, foreign_key::ForeignKeySynLike,
-        function::FunctionSynLike,
+        ColumnSynLike, UniqueIndexSynLike, check_constraint::CheckConstraintSynLike,
+        foreign_key::ForeignKeySynLike, function::FunctionSynLike,
     },
     utils::is_reserved_rust_word,
 };
@@ -520,11 +520,65 @@ where
     ) -> Result<Vec<proc_macro2::TokenStream>, crate::Error> {
         let mut validation_impls = Vec::new();
         for column in self.columns(database)? {
-            if column.has_non_tautological_check_constraints(database)? {
+            if column.has_single_column_check_constraints(database)? {
                 validation_impls.push(column.generate_validation_impl(workspace, database)?);
             }
         }
         Ok(validation_impls)
+    }
+
+    /// Generates the `ValidateRecord` impl checking the constraints that span
+    /// several columns, or `None` when the table has no such constraint.
+    ///
+    /// # Arguments
+    ///
+    /// * `workspace` - The workspace where the table is defined.
+    /// * `database` - The database where the table is defined.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a check constraint cannot be translated.
+    fn generate_record_validation_impl(
+        &self,
+        workspace: &Workspace,
+        database: &Self::DB,
+    ) -> Result<Option<proc_macro2::TokenStream>, crate::Error> {
+        let table_has_surrogate_pk = self.has_surrogate_primary_key(database)?;
+        let mut validations = Vec::new();
+        for check_constraint in self.non_tautological_check_constraints(database)? {
+            if check_constraint.number_of_columns(database)? <= 1
+                || check_constraint.is_mutual_nullability_constraint(database)
+            {
+                continue;
+            }
+            let mut involves_surrogate_key = false;
+            for column in check_constraint.columns(database)? {
+                if table_has_surrogate_pk && column.is_primary_key(database)? {
+                    involves_surrogate_key = true;
+                    break;
+                }
+            }
+            if involves_surrogate_key {
+                continue;
+            }
+            validations.push(check_constraint.to_syn(database, workspace, &[])?);
+        }
+        if validations.is_empty() {
+            return Ok(None);
+        }
+        let table_ident = self.table_snake_ident();
+        Ok(Some(quote! {
+            impl ::diesel_builders::ValidateRecord<#table_ident::table>
+                for <#table_ident::table as ::diesel_builders::TableExt>::NewValues
+            {
+                #[inline]
+                fn validate_record(&self) -> Result<(), ::validation_errors::ValidationError> {
+                    use diesel::Column;
+                    #(#validations)*
+                    Ok(())
+                }
+            }
+        }))
     }
 
     /// Generates the `#[diesel(belongs_to(Foo, foreign_key = mykey))]`

@@ -1,6 +1,6 @@
 # SQL Relations
 
-**SQL Relations** provides semantic abstractions over SQL foreign key relationships, extending the schema introspection capabilities of [sql-traits](https://github.com/earth-metabolome-initiative/sql-traits). It focuses on identifying and categorizing "Same As" relationships—where data in one table is semantically equivalent to data in another—enabling the modeling of complex schema patterns like inheritance and triangulation.
+**SQL Relations** provides semantic abstractions over SQL foreign key relationships, extending the schema introspection capabilities of [sql-traits](https://github.com/connetto-rs/sql-traits). It focuses on identifying and categorizing "Same As" relationships—where data in one table is semantically equivalent to data in another—enabling the modeling of complex schema patterns like inheritance and triangulation.
 
 ## Core Concepts
 
@@ -204,13 +204,13 @@ erDiagram
 
 ## Dependencies
 
-* **[sql-traits](https://github.com/earth-metabolome-initiative/sql-traits)**: Provides the fundamental database introspection traits (`TableLike`, `ForeignKeyLike`, etc.) that this crate extends with semantic logic.
+* **[sql-traits](https://github.com/connetto-rs/sql-traits)**: Provides the fundamental database introspection traits (`TableLike`, `ForeignKeyLike`, etc.) that this crate extends with semantic logic.
 
 ## Usage
 
-This crate is a core component of [SynQL](https://github.com/earth-metabolome-initiative/synql), used to generate type-safe Rust comparisons and builder patterns that respect these semantic relationships.
+This crate is a core component of [SynQL](https://github.com/connetto-rs/synql), used to generate type-safe Rust comparisons and builder patterns that respect these semantic relationships.
 
 ```toml
 [dependencies]
-sql_relations = { git = "https://github.com/earth-metabolome-initiative/synql" }
+sql_relations = { git = "https://github.com/connetto-rs/synql" }
 ```

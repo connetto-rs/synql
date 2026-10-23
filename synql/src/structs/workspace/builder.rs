@@ -171,10 +171,11 @@ impl WorkspaceBuilder {
         self.external_crate(ExternalCrate::diesel(number_of_columns))
     }
 
-    /// Adds the `postgis-diesel` external crate to the workspace.
+    /// Adds the `sqlitegis` external crate, and the `diesel` crate it
+    /// extends, to the workspace.
     #[must_use]
-    pub fn postgis_diesel(self, number_of_columns: MaximalNumberOfColumns) -> Self {
-        self.external_crate(ExternalCrate::postgis_diesel()).diesel(number_of_columns)
+    pub fn sqlitegis(self, number_of_columns: MaximalNumberOfColumns) -> Self {
+        self.external_crate(ExternalCrate::sqlitegis()).diesel(number_of_columns)
     }
 
     /// Adds the `pgrx_validation` external crate to the workspace.

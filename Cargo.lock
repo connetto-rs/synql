@@ -1006,7 +1006,7 @@ checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 [[package]]
 name = "sql-rules"
 version = "0.1.0"
-source = "git+https://github.com/earth-metabolome-initiative/sql-rules?branch=main#546cc814e59abcff07fd9026581c82a60c64db2f"
+source = "git+https://github.com/connetto-rs/sql-rules?branch=main#f2f381401dfa3e146c42325986307031cd91b0da"
 dependencies = [
  "heck",
  "inflection-rs",
@@ -1017,7 +1017,7 @@ dependencies = [
 [[package]]
 name = "sql-traits"
 version = "0.1.0"
-source = "git+https://github.com/earth-metabolome-initiative/sql-traits?branch=main#8fcca5b78d1d1723c5c7e54074e49bb5a50a7bbd"
+source = "git+https://github.com/connetto-rs/sql-traits?branch=main#13a012e778cbda0ebc5dcf62e76a84f45ecc3696"
 dependencies = [
  "geometric-traits",
  "git2",
@@ -1039,7 +1039,7 @@ dependencies = [
 [[package]]
 name = "sqlparser"
 version = "0.63.0"
-source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#d9eec6e06bc53d629600be40851c5443b4ffaa13"
+source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#383cc0b1a76ae9a0a217bc03ce4cf9c3f2120030"
 dependencies = [
  "log",
  "recursive",
@@ -1049,7 +1049,7 @@ dependencies = [
 [[package]]
 name = "sqlparser_derive"
 version = "0.6.0"
-source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#d9eec6e06bc53d629600be40851c5443b4ffaa13"
+source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#383cc0b1a76ae9a0a217bc03ce4cf9c3f2120030"
 dependencies = [
  "proc-macro2",
  "quote",

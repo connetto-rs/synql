@@ -13,8 +13,6 @@ impl ExternalCrate {
             .unwrap()
             .version("0.1.0")
             .unwrap()
-            .git("https://github.com/earth-metabolome-initiative/rosetta-utc", "main")
-            .unwrap()
             .features(["diesel", "serde", "sqlite"])
             .types([ExternalType::new(
                 syn::parse_quote!(::rosetta_utc::diesel_impls::TimestampUTC),

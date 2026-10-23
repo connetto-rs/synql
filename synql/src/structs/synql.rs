@@ -94,6 +94,46 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         Ok(false)
     }
 
+    /// Returns the tables whose crates the crate of `table` depends on.
+    ///
+    /// These are the referenced tables, the extended ancestors and the spouses
+    /// whose pair this crate owns. A spouse pair belongs to the table depending
+    /// on the other, or to the smaller table when neither depends on the
+    /// other, so that each pair gets a single owner and no crate cycle forms.
+    /// The crate of `table` also declares each of these tables as joinable
+    /// with its own.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the related tables cannot be resolved.
+    fn crate_dependencies<'a>(
+        &'a self,
+        table: &'a DB::Table,
+    ) -> Result<Vec<&'a DB::Table>, crate::Error> {
+        let mut candidates = table
+            .referenced_tables(self.database)?
+            .into_iter()
+            .chain(table.ancestral_extended_tables(self.database)?)
+            .collect::<Vec<_>>();
+        for spouse in table.spouses(self.database)? {
+            if table.depends_on(self.database, spouse)?
+                || table < spouse && !spouse.depends_on(self.database, table)?
+            {
+                candidates.push(spouse);
+            }
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+
+        let mut dependencies = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            if candidate != table && !self.skip_table(candidate)? {
+                dependencies.push(candidate);
+            }
+        }
+        Ok(dependencies)
+    }
+
     /// Writes the workspace TOML.
     ///
     /// # Errors
@@ -198,6 +238,31 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         }
         writeln!(buffer)?;
 
+        // A published crate followed on git is patched for its crates.io
+        // dependents too, so the workspace builds a single copy of it.
+        let patched = workspace
+            .external_crates()
+            .filter(|external_crate| external_crate.is_dependency())
+            .filter_map(|external_crate| {
+                let dependency: &TomlDependency = external_crate.as_ref();
+                dependency.get_version()?;
+                let git = dependency.get_git()?;
+                Some((dependency.name(), git, dependency.get_branch()))
+            })
+            .collect::<Vec<_>>();
+        if !patched.is_empty() {
+            writeln!(buffer, "[patch.crates-io]")?;
+            for (name, git, branch) in patched {
+                match branch {
+                    Some(branch) => {
+                        writeln!(buffer, "{name} = {{ git = \"{git}\", branch = \"{branch}\" }}")?;
+                    }
+                    None => writeln!(buffer, "{name} = {{ git = \"{git}\" }}")?,
+                }
+            }
+            writeln!(buffer)?;
+        }
+
         // Write [workspace.lints.rust] section
         writeln!(buffer, "[workspace.lints.rust]")?;
         writeln!(buffer, "missing_docs = \"forbid\"")?;
@@ -267,7 +332,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             .serde()
             .serde_json()
             .validation_errors()
-            .postgis_diesel(maximum_number_of_columns)
+            .sqlitegis(maximum_number_of_columns)
             .diesel_builders(maximum_number_of_columns_in_hierarchy)
             .rosetta_uuid()
             .version(self.version.0, self.version.1, self.version.2)

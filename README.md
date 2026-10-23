@@ -1,9 +1,9 @@
 # SynQL
 
-[![CI](https://github.com/earth-metabolome-initiative/synql/workflows/Rust%20CI/badge.svg)](https://github.com/earth-metabolome-initiative/synql/actions)
-[![Security Audit](https://github.com/earth-metabolome-initiative/synql/workflows/Security%20Audit/badge.svg)](https://github.com/earth-metabolome-initiative/synql/actions)
+[![CI](https://github.com/connetto-rs/synql/workflows/Rust%20CI/badge.svg)](https://github.com/connetto-rs/synql/actions)
+[![Security Audit](https://github.com/connetto-rs/synql/workflows/Security%20Audit/badge.svg)](https://github.com/connetto-rs/synql/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Codecov](https://codecov.io/gh/earth-metabolome-initiative/synql/branch/main/graph/badge.svg)](https://codecov.io/gh/earth-metabolome-initiative/synql)
+[![Codecov](https://codecov.io/gh/connetto-rs/synql/branch/main/graph/badge.svg)](https://codecov.io/gh/connetto-rs/synql)
 
 SynQL is a library designed to generate a modular Cargo workspace from a SQL schema. SynQL generates a separate Type Safe Rust crate for each table in your database.
 
@@ -16,7 +16,7 @@ This architectural choice enables:
 
 ## Features
 
-- **Advanced ORM Capabilities**: The generated models utilize the [diesel-builders](https://github.com/LucaCappelletti94/diesel-builders/) crate, providing a sophisticated builder pattern, handling complex table relationships (DAGs, inheritance), and enforcing compile-time correctness for data insertion.
+- **Advanced ORM Capabilities**: The generated models utilize the [diesel-builders](https://github.com/connetto-rs/diesel-builders/) crate, providing a sophisticated builder pattern, handling complex table relationships (DAGs, inheritance), and enforcing compile-time correctness for data insertion.
 - **Type Safety**: Maps SQL types to Rust types with high fidelity.
 - **SQL Relations**: SynQL builds upon the `sql_relations` crate, which extends standard foreign key introspection with semantic "Same As" topology. It identifies complex patterns like **Vertical Same As** (inheritance-like redundancy), **Horizontal Same As** (sibling table equivalence), and **Triangular Same As** (diamond dependency consistency), allowing the generated code to enforce deeper data integrity constraints.
 
