@@ -24,7 +24,7 @@ impl ExternalType {
     fn geometry() -> Self {
         ExternalType::new(
             syn::parse_quote!(::sqlitegis::diesel::Geometry),
-            syn::parse_quote!(::sqlitegis::diesel::GeoValue),
+            syn::parse_quote!(::sqlitegis::diesel::GeometryValue),
         )
         .postgres_types([
             "geometry",
@@ -48,7 +48,7 @@ impl ExternalType {
     fn geography() -> Self {
         ExternalType::new(
             syn::parse_quote!(::sqlitegis::diesel::Geography),
-            syn::parse_quote!(::sqlitegis::diesel::GeoValue),
+            syn::parse_quote!(::sqlitegis::diesel::GeographyValue),
         )
         .postgres_types(["geography", "geography(point, 4326)"])
         .unwrap()
