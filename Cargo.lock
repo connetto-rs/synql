@@ -86,9 +86,9 @@ checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
 
 [[package]]
 name = "cc"
-version = "1.9.0"
+version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "877bf67ac8e52449eb2f9e98a344ea163beb70dd1f9eebe3cc5357dcfeaee4df"
+checksum = "86e055fa6e3e40ad6187ba25b6855eeb635d5271f8e0f0e1e9a5826b8d75bea0"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -999,14 +999,14 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.16.3"
+version = "1.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
+checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 
 [[package]]
 name = "sql-rules"
 version = "0.1.0"
-source = "git+https://github.com/connetto-rs/sql-rules?branch=main#f2f381401dfa3e146c42325986307031cd91b0da"
+source = "git+https://github.com/connetto-rs/sql-rules?branch=main#edc8870d615fc7e3ba187cda3e6d684f9fbcf85f"
 dependencies = [
  "heck",
  "inflection-rs",
@@ -1017,7 +1017,7 @@ dependencies = [
 [[package]]
 name = "sql-traits"
 version = "0.1.0"
-source = "git+https://github.com/connetto-rs/sql-traits?branch=main#13a012e778cbda0ebc5dcf62e76a84f45ecc3696"
+source = "git+https://github.com/connetto-rs/sql-traits?branch=main#b22af79df1378c469fb6cfa5cd2a66f793ed73b6"
 dependencies = [
  "geometric-traits",
  "git2",
@@ -1039,7 +1039,7 @@ dependencies = [
 [[package]]
 name = "sqlparser"
 version = "0.63.0"
-source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#383cc0b1a76ae9a0a217bc03ce4cf9c3f2120030"
+source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#594bb046b03ccf9463b00a5906b4ed8e2f2978a6"
 dependencies = [
  "log",
  "recursive",
@@ -1049,7 +1049,7 @@ dependencies = [
 [[package]]
 name = "sqlparser_derive"
 version = "0.6.0"
-source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#383cc0b1a76ae9a0a217bc03ce4cf9c3f2120030"
+source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#594bb046b03ccf9463b00a5906b4ed8e2f2978a6"
 dependencies = [
  "proc-macro2",
  "quote",
