@@ -78,11 +78,8 @@ where
             return Ok(false);
         }
 
-        let Some(unique_index) = self.is_referenced_unique_key(database)? else {
-            return Ok(false);
-        };
-
-        unique_index.is_same_as(database)
+        self.is_referenced_unique_key(database)?
+            .map_or(Ok(false), |unique_index| unique_index.is_same_as(database))
     }
 
     /// Returns the tuple of host-referenced column pairs for this vertical
@@ -137,14 +134,16 @@ where
         if !self.is_vertical_same_as(database)? {
             return Ok(None);
         }
+        let mut pair = None;
         for (host_column, referenced_column) in
             self.host_columns(database)?.zip(self.referenced_columns(database)?)
         {
             if !host_column.is_primary_key(database)? {
-                return Ok(Some((host_column, referenced_column)));
+                pair = Some((host_column, referenced_column));
+                break;
             }
         }
-        Ok(None)
+        Ok(pair)
     }
 }
 

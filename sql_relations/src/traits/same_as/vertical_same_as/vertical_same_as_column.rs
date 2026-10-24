@@ -132,12 +132,15 @@ where
         &'db self,
         database: &'db Self::DB,
     ) -> Result<Vec<&'db <Self::DB as DatabaseLike>::Column>, LookupError> {
+        use crate::traits::same_as::vertical_same_as::vertical_same_as_table::VerticalSameAsTableLike;
         let mut columns = Vec::new();
-        for foreign_key in self.vertical_same_as_foreign_keys(database)? {
-            if let Some(column) =
-                foreign_key.referenced_column_for_host_column(database, self.borrow())?
+        for foreign_key in self.table(database).vertical_same_as_foreign_keys(database)? {
+            for (host_column, referenced_column) in
+                foreign_key.host_columns(database)?.zip(foreign_key.referenced_columns(database)?)
             {
-                columns.push(column);
+                if host_column == self.borrow() {
+                    columns.push(referenced_column);
+                }
             }
         }
         Ok(columns)

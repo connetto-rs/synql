@@ -71,11 +71,8 @@ pub trait TableListLike: TableLike {
     /// keys of the root tables cannot be resolved.
     fn is_table_list_like(&self, database: &Self::DB) -> Result<bool, LookupError> {
         // We expect exactly one column.
-        if self.number_of_columns(database)? != 1 {
-            return Ok(false);
-        }
-        // We retrieve that column.
-        let Some(column) = self.columns(database)?.next() else {
+        let mut columns = self.columns(database)?;
+        let (Some(column), None) = (columns.next(), columns.next()) else {
             return Ok(false);
         };
         // We check if that column is the primary key && textual.

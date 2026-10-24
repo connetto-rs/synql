@@ -27,21 +27,6 @@ pub trait FunctionSynLike: FunctionLike {
             .map(move |arg_type_name| workspace.external_postgres_type(&arg_type_name))
     }
 
-    /// Returns the type ref curresponding to the return type of the
-    /// function, if any.
-    ///
-    /// # Arguments
-    /// * `workspace` - The workspace where the column is defined.
-    /// * `database` - The database where the column is defined.
-    fn return_type<'workspace>(
-        &self,
-        workspace: &'workspace Workspace,
-        database: &Self::DB,
-    ) -> Option<ExternalTypeRef<'workspace>> {
-        self.normalized_return_type_name(database)
-            .and_then(|ret_type_name| workspace.external_postgres_type(&ret_type_name))
-    }
-
     /// Returns the external function reference for this function, if any.
     ///
     /// # Arguments

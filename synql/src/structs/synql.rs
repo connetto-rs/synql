@@ -159,11 +159,10 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             if wrote {
                 write!(buffer, ", ")?;
             }
-            if let Some(path) = member.get_path() {
-                write!(buffer, "\"{path}\"")?;
-            } else {
-                return Err(std::io::Error::other("Workspace member MUST start with a path").into());
-            }
+            let Some(path) = member.get_path() else {
+                return Err(crate::Error::WorkspaceMemberWithoutPath(member.name().to_owned()));
+            };
+            write!(buffer, "\"{path}\"")?;
             wrote = true;
         }
 
@@ -240,28 +239,14 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
         // A published crate followed on git is patched for its crates.io
         // dependents too, so the workspace builds a single copy of it.
-        let patched = workspace
-            .external_crates()
-            .filter(|external_crate| external_crate.is_dependency())
-            .filter_map(|external_crate| {
-                let dependency: &TomlDependency = external_crate.as_ref();
-                dependency.get_version()?;
-                let git = dependency.get_git()?;
-                Some((dependency.name(), git, dependency.get_branch()))
-            })
-            .collect::<Vec<_>>();
-        if !patched.is_empty() {
-            writeln!(buffer, "[patch.crates-io]")?;
-            for (name, git, branch) in patched {
-                match branch {
-                    Some(branch) => {
-                        writeln!(buffer, "{name} = {{ git = \"{git}\", branch = \"{branch}\" }}")?;
-                    }
-                    None => writeln!(buffer, "{name} = {{ git = \"{git}\" }}")?,
-                }
+        writeln!(buffer, "[patch.crates-io]")?;
+        for external_crate in workspace.external_crates() {
+            let dependency: &TomlDependency = external_crate.as_ref();
+            if let Some(patch) = dependency.crates_io_patch() {
+                writeln!(buffer, "{patch}")?;
             }
-            writeln!(buffer)?;
         }
+        writeln!(buffer)?;
 
         // Write [workspace.lints.rust] section
         writeln!(buffer, "[workspace.lints.rust]")?;

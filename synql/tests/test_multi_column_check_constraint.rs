@@ -1,5 +1,6 @@
 //! Test to verify that tables with composite multi-column check constraints
-//! validate them on the whole record and compile.
+//! validate them on the whole record and compile, except constraints on a
+//! surrogate key, which the record cannot know before insertion.
 
 use std::process::Command;
 
@@ -16,6 +17,11 @@ fn test_multi_column_check_constraint() {
         value1 INT,
         value2 INT,
         CHECK (value1 < value2)
+    );
+    CREATE TABLE nodes (
+        id SERIAL PRIMARY KEY,
+        parent_id INT,
+        CHECK (id <> parent_id)
     );
 ",
     )
@@ -48,6 +54,15 @@ fn test_multi_column_check_constraint() {
         "A column with only multi-column checks must not validate alone. Found:\n{content}"
     );
     assert!(normalized.contains("value1>=value2"), "Missing order check. Found:\n{content}");
+
+    let nodes_path =
+        workspace_path.join("synql-multi-column-check-nodes").join("src").join("lib.rs");
+    let nodes = std::fs::read_to_string(&nodes_path)
+        .unwrap_or_else(|e| panic!("Could not read file at {nodes_path:?}: {e}"));
+    assert!(
+        !nodes.contains("ValidateRecord"),
+        "A check on the surrogate key must not validate the record. Found:\n{nodes}"
+    );
 
     let output = Command::new("cargo")
         .arg("check")

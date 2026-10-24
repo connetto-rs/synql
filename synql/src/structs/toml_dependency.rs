@@ -208,6 +208,19 @@ impl TomlDependency {
     pub fn get_path(&self) -> Option<&str> {
         self.path.as_deref()
     }
+
+    /// Returns the `[patch.crates-io]` entry redirecting this published
+    /// dependency to its git source, or `None` unless it has both a version
+    /// and a git source.
+    #[must_use]
+    pub fn crates_io_patch(&self) -> Option<Self> {
+        self.version.as_ref()?;
+        Some(Self {
+            git: Some(self.git.clone()?),
+            branch: self.branch.clone(),
+            ..Self::new(self.name.clone())
+        })
+    }
 }
 
 impl std::fmt::Display for TomlDependency {
@@ -336,5 +349,39 @@ mod tests {
             dep.to_string(),
             "complex = { version = \"2.0\", features = [\"feat1\"], optional = true, default-features = false }"
         );
+    }
+
+    #[test]
+    fn test_crates_io_patch_keeps_only_the_git_source() {
+        let dep = TomlDependency::new("diesel")
+            .version("2.3.13")
+            .unwrap()
+            .git("https://github.com/diesel-rs/diesel", Some("main"))
+            .unwrap()
+            .feature("postgres")
+            .default_features(false);
+        assert_eq!(
+            dep.crates_io_patch().unwrap().to_string(),
+            "diesel = { git = \"https://github.com/diesel-rs/diesel\", branch = \"main\" }"
+        );
+
+        let without_branch = TomlDependency::new("diesel")
+            .version("2.3.13")
+            .unwrap()
+            .git("https://github.com/diesel-rs/diesel", None::<String>)
+            .unwrap();
+        assert_eq!(
+            without_branch.crates_io_patch().unwrap().to_string(),
+            "diesel = { git = \"https://github.com/diesel-rs/diesel\" }"
+        );
+    }
+
+    #[test]
+    fn test_crates_io_patch_needs_version_and_git() {
+        let git_only = TomlDependency::new("diesel-builders")
+            .git("https://github.com/connetto-rs/diesel-builders", Some("main"))
+            .unwrap();
+        assert_eq!(git_only.crates_io_patch(), None);
+        assert_eq!(TomlDependency::new("serde").version("1").unwrap().crates_io_patch(), None);
     }
 }

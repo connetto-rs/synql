@@ -168,34 +168,6 @@ pub trait TriangularSameAsForeignKeyLike: HorizontalSameAsForeignKeyLike {
     }
 
     /// Returns whether this foreign key is an horizontal same-as foreign key
-    /// of a mandatory triangular same-as relationship.
-    ///
-    /// # Arguments
-    ///
-    /// * `database` - The database containing the tables.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`LookupError`] when the foreign keys of the host table or
-    /// the tables they reference cannot be resolved.
-    fn is_horizontal_same_as_of_mandatory_triangular(
-        &self,
-        database: &Self::DB,
-    ) -> Result<bool, LookupError> {
-        if !self.is_horizontal_same_as(database)? {
-            return Ok(false);
-        }
-        for foreign_key in self.host_table(database).foreign_keys(database)? {
-            if let Some(triangle) = foreign_key.triangular_same_as(database)?
-                && triangle.horizontal_same_as().map(Borrow::borrow) == Some(self)
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    /// Returns whether this foreign key is an horizontal same-as foreign key
     /// of a triangular same-as relationship.
     ///
     /// # Arguments
@@ -214,11 +186,9 @@ pub trait TriangularSameAsForeignKeyLike: HorizontalSameAsForeignKeyLike {
             return Ok(false);
         }
 
-        let Some(first_host_column) = self.host_columns(database)?.next() else {
-            return Ok(false);
-        };
-
-        first_host_column.has_triangular_same_as_foreign_key(database)
+        self.host_columns(database)?
+            .next()
+            .map_or(Ok(false), |column| column.has_triangular_same_as_foreign_key(database))
     }
 
     /// Returns the kind of triangular same-as relationship this foreign key

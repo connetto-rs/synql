@@ -321,19 +321,6 @@ where
         }
     }
 
-    /// Iterates over the identifiers of the primary key columns of this table.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`LookupError`] when the primary key columns cannot be
-    /// resolved.
-    fn primary_key_idents<'db>(
-        &'db self,
-        database: &'db Self::DB,
-    ) -> Result<impl Iterator<Item = Ident> + 'db, LookupError> {
-        Ok(self.primary_key_columns(database)?.map(ColumnSynLike::column_snake_ident))
-    }
-
     /// Returns the sorted unique external crates required by this table,
     /// including those required by its columns and its check constraints.
     ///

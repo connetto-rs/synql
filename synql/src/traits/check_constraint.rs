@@ -5,10 +5,7 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use sql_traits::{
-    errors::LookupError,
-    traits::{CheckConstraintLike, DatabaseLike},
-};
+use sql_traits::traits::{CheckConstraintLike, DatabaseLike};
 
 mod sub_expressions;
 mod translate_expression;
@@ -34,14 +31,16 @@ pub trait CheckConstraintSynLike: CheckConstraintLike {
     ///
     /// # Errors
     ///
-    /// Returns a [`LookupError`] when the table, columns or functions of the
-    /// check constraint cannot be resolved.
+    /// Returns [`Error::Lookup`](crate::Error::Lookup) when the table, columns
+    /// or functions of the check constraint cannot be resolved, and
+    /// [`Error::UnsupportedCheckConstraint`](crate::Error::UnsupportedCheckConstraint)
+    /// when it uses SQL without a Rust translation.
     fn to_syn<'db>(
         &'db self,
         database: &'db Self::DB,
         workspace: &Workspace,
         contextual_columns: &[&'db <Self::DB as DatabaseLike>::Column],
-    ) -> Result<TokenStream, LookupError> {
+    ) -> Result<TokenStream, crate::Error> {
         let translator: TranslateExpression<'_, 'db, <Self as CheckConstraintLike>::DB> =
             TranslateExpression::new(self.borrow(), workspace, contextual_columns, database);
 

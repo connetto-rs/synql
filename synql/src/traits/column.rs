@@ -15,7 +15,7 @@ use sql_traits::{
     errors::LookupError,
     traits::{CheckConstraintLike, ColumnLike, DatabaseLike, ForeignKeyLike, TableLike},
 };
-use syn::{Ident, Type};
+use syn::Ident;
 
 use crate::{
     structs::{ExternalTypeRef, Workspace},
@@ -187,50 +187,6 @@ pub trait ColumnSynLike: ColumnLike {
         database: &Self::DB,
     ) -> Option<ExternalTypeRef<'workspace>> {
         workspace.external_postgres_type(&self.normalized_data_type(database))
-    }
-
-    /// Returns the Diesel type of this column.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`LookupError`] when the nullability of the column cannot be
-    /// resolved.
-    fn diesel_type(
-        &self,
-        workspace: &Workspace,
-        database: &Self::DB,
-    ) -> Result<Option<Type>, LookupError> {
-        let Some(external_type) = self.external_postgres_type(workspace, database) else {
-            return Ok(None);
-        };
-        let diesel_type = external_type.diesel_type();
-        Ok(Some(if self.is_nullable(database)? {
-            syn::parse_quote!(diesel::sql_types::Nullable<#diesel_type>)
-        } else {
-            diesel_type.clone()
-        }))
-    }
-
-    /// Returns the Rust type of this column.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`LookupError`] when the nullability of the column cannot be
-    /// resolved.
-    fn rust_type(
-        &self,
-        workspace: &Workspace,
-        database: &Self::DB,
-    ) -> Result<Option<Type>, LookupError> {
-        let Some(external_type) = self.external_postgres_type(workspace, database) else {
-            return Ok(None);
-        };
-        let rust_type = external_type.rust_type();
-        Ok(Some(if self.is_nullable(database)? {
-            syn::parse_quote!(Option<#rust_type>)
-        } else {
-            rust_type.clone()
-        }))
     }
 
     /// Returns whether the column type supports the `Copy` trait in Rust.

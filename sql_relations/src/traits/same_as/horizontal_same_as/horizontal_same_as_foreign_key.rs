@@ -61,11 +61,10 @@ pub trait HorizontalSameAsForeignKeyLike: VerticalSameAsForeignKeyLike {
     /// Returns a [`LookupError`] when the columns, the referenced table or its
     /// unique indices cannot be resolved.
     fn is_horizontal_same_as(&self, database: &Self::DB) -> Result<bool, LookupError> {
-        let Some(unique_index) = self.is_referenced_unique_key(database)? else {
-            return Ok(false);
-        };
-
-        Ok(unique_index.is_same_as(database)?
+        let references_same_as_index = self
+            .is_referenced_unique_key(database)?
+            .map_or(Ok(false), |unique_index| unique_index.is_same_as(database))?;
+        Ok(references_same_as_index
             && !self.is_vertical_same_as(database)?
             && !self.is_self_referential(database)?
             && !self.references_ancestor_table(database)?)
@@ -157,12 +156,10 @@ pub trait HorizontalSameAsForeignKeyLike: VerticalSameAsForeignKeyLike {
             return Ok(None);
         }
 
-        let host_columns = self.host_columns(database)?.collect::<Vec<_>>();
-        let [host_fk_column, host_column] = host_columns.as_slice() else {
-            return Ok(None);
-        };
-        let referenced_columns = self.referenced_columns(database)?.collect::<Vec<_>>();
-        let [_foreign_pk, referenced_column] = referenced_columns.as_slice() else {
+        let mut pairs = self.host_columns(database)?.zip(self.referenced_columns(database)?);
+        let (Some((host_fk_column, _)), Some((host_column, referenced_column)), None) =
+            (pairs.next(), pairs.next(), pairs.next())
+        else {
             return Ok(None);
         };
         Ok(Some((host_fk_column, host_column, referenced_column)))
