@@ -16,15 +16,18 @@ use sql_relations::{
         VerticalSameAsForeignKeyLike,
     },
 };
-use sql_traits::traits::{CheckConstraintLike, ColumnLike, DatabaseLike, TableLike};
+use sql_traits::{
+    errors::LookupError,
+    traits::{CheckConstraintLike, ColumnLike, DatabaseLike, TableLike},
+};
 use strum::IntoEnumIterator;
 use syn::Ident;
 
 use crate::{
     structs::{ExternalCrate, TomlDependency, Trait, Workspace},
     traits::{
-        ColumnSynLike, UniqueIndexSynLike, foreign_key::ForeignKeySynLike,
-        function::FunctionSynLike,
+        ColumnSynLike, UniqueIndexSynLike, check_constraint::CheckConstraintSynLike,
+        foreign_key::ForeignKeySynLike, function::FunctionSynLike,
     },
     utils::is_reserved_rust_word,
 };
@@ -112,7 +115,9 @@ where
     /// use synql::prelude::*;
     ///
     /// let db = ParserDB::parse::<GenericDialect>("CREATE TABLE _my__table (id INT);")?;
-    /// let table = db.table(None, "_my__table").unwrap();
+    /// let table = db
+    ///     .table_by_target(TargetName::new("_my__table", false), IdentifierCase::AsWritten)?
+    ///     .unwrap();
     /// assert_eq!(table.table_snake_name(), "my_table");
     /// # Ok(())
     /// # }
@@ -132,7 +137,8 @@ where
     /// use synql::prelude::*;
     ///
     /// let db = ParserDB::parse::<GenericDialect>("CREATE TABLE users (id INT);")?;
-    /// let table = db.table(None, "users").unwrap();
+    /// let table =
+    ///     db.table_by_target(TargetName::new("users", false), IdentifierCase::AsWritten)?.unwrap();
     /// assert_eq!(table.table_singular_snake_name(), "user");
     /// # Ok(())
     /// # }
@@ -157,8 +163,10 @@ where
     ///         CREATE TABLE MyTable (id INT);
     /// ",
     /// )?;
-    /// let table1 = db.table(None, "my_table").unwrap();
-    /// let table2 = db.table(None, "MyTable").unwrap();
+    /// let table1 =
+    ///     db.table_by_target(TargetName::new("my_table", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let table2 =
+    ///     db.table_by_target(TargetName::new("MyTable", false), IdentifierCase::AsWritten)?.unwrap();
     /// assert!(table1.has_snake_case_table_name());
     /// assert!(!table2.has_snake_case_table_name());
     /// # Ok(())
@@ -179,7 +187,8 @@ where
     /// use synql::prelude::*;
     ///
     /// let db = ParserDB::parse::<GenericDialect>("CREATE TABLE box (id INT);")?;
-    /// let table = db.table(None, "box").unwrap();
+    /// let table =
+    ///     db.table_by_target(TargetName::new("box", false), IdentifierCase::AsWritten)?.unwrap();
     /// assert_eq!(table.table_snake_ident().to_string(), "r#box");
     /// # Ok(())
     /// # }
@@ -204,7 +213,8 @@ where
     /// use synql::prelude::*;
     ///
     /// let db = ParserDB::parse::<GenericDialect>("CREATE TABLE users (id INT);")?;
-    /// let table = db.table(None, "users").unwrap();
+    /// let table =
+    ///     db.table_by_target(TargetName::new("users", false), IdentifierCase::AsWritten)?.unwrap();
     /// assert_eq!(table.table_singular_snake_ident().to_string(), "user");
     /// # Ok(())
     /// # }
@@ -229,7 +239,8 @@ where
     /// use synql::prelude::*;
     ///
     /// let db = ParserDB::parse::<GenericDialect>("CREATE TABLE my_table (id INT);")?;
-    /// let table = db.table(None, "my_table").unwrap();
+    /// let table =
+    ///     db.table_by_target(TargetName::new("my_table", false), IdentifierCase::AsWritten)?.unwrap();
     /// assert_eq!(table.table_camel_name(), "MyTable");
     /// # Ok(())
     /// # }
@@ -249,7 +260,8 @@ where
     /// use synql::prelude::*;
     ///
     /// let db = ParserDB::parse::<GenericDialect>("CREATE TABLE users (id INT);")?;
-    /// let table = db.table(None, "users").unwrap();
+    /// let table =
+    ///     db.table_by_target(TargetName::new("users", false), IdentifierCase::AsWritten)?.unwrap();
     /// assert_eq!(table.table_singular_camel_name(), "User");
     /// # Ok(())
     /// # }
@@ -269,7 +281,8 @@ where
     /// use sqlparser::dialect::GenericDialect;
     /// use synql::prelude::*;
     /// let db = ParserDB::parse::<GenericDialect>("CREATE TABLE struct (id INT);")?;
-    /// let table = db.table(None, "struct").unwrap();
+    /// let table =
+    ///     db.table_by_target(TargetName::new("struct", false), IdentifierCase::AsWritten)?.unwrap();
     /// assert_eq!(table.table_camel_ident().to_string(), "Struct");
     /// # Ok(())
     /// # }
@@ -293,7 +306,8 @@ where
     /// use sqlparser::dialect::GenericDialect;
     /// use synql::prelude::*;
     /// let db = ParserDB::parse::<GenericDialect>("CREATE TABLE users (id INT);")?;
-    /// let table = db.table(None, "users").unwrap();
+    /// let table =
+    ///     db.table_by_target(TargetName::new("users", false), IdentifierCase::AsWritten)?.unwrap();
     /// assert_eq!(table.table_singular_camel_ident().to_string(), "User");
     /// # Ok(())
     /// # }
@@ -307,29 +321,26 @@ where
         }
     }
 
-    /// Iterates over the identifiers of the primary key columns of this table.
-    fn primary_key_idents<'db>(
-        &'db self,
-        database: &'db Self::DB,
-    ) -> impl Iterator<Item = Ident> + 'db {
-        self.primary_key_columns(database).map(ColumnSynLike::column_snake_ident)
-    }
-
     /// Returns the sorted unique external crates required by this table,
     /// including those required by its columns and its check constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the columns, check constraints or their
+    /// functions cannot be resolved.
     fn external_crates<'workspace>(
         &self,
         database: &Self::DB,
         workspace: &'workspace Workspace,
-    ) -> Vec<&'workspace ExternalCrate> {
+    ) -> Result<Vec<&'workspace ExternalCrate>, LookupError> {
         let mut crates = Vec::new();
-        for column in self.columns(database) {
+        for column in self.columns(database)? {
             if let Some(postgres_type) = column.external_postgres_type(workspace, database) {
                 crates.push(postgres_type.external_crate());
             }
         }
-        for check_constraint in self.check_constraints(database) {
-            for function in check_constraint.functions(database) {
+        for check_constraint in self.check_constraints(database)? {
+            for function in check_constraint.functions(database)? {
                 if let Some(external_crate) = function.external_function_ref(workspace) {
                     crates.push(external_crate.external_crate());
                 }
@@ -337,7 +348,7 @@ where
         }
         crates.sort_unstable();
         crates.dedup();
-        crates
+        Ok(crates)
     }
 
     /// Returns the list of core derives that can be derived for this table.
@@ -345,14 +356,23 @@ where
     /// # Arguments
     /// * `database` - The database where the table is defined.
     /// * `workspace` - The workspace where the table is defined.
-    fn supported_core_derives(&self, database: &Self::DB, workspace: &Workspace) -> Vec<syn::Path> {
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the columns cannot be resolved.
+    fn supported_core_derives(
+        &self,
+        database: &Self::DB,
+        workspace: &Workspace,
+    ) -> Result<Vec<syn::Path>, LookupError> {
+        let columns = self.columns(database)?.collect::<Vec<_>>();
         let mut derives = Vec::new();
         for core_trait in Trait::iter() {
-            if self.columns(database).all(|col| col.supports(core_trait, workspace, database)) {
+            if columns.iter().all(|col| col.supports(core_trait, workspace, database)) {
                 derives.push(core_trait.path());
             }
         }
-        derives
+        Ok(derives)
     }
 
     /// Generates the struct field tokens for all columns of this table.
@@ -371,7 +391,7 @@ where
         database: &Self::DB,
     ) -> Result<Vec<proc_macro2::TokenStream>, crate::Error> {
         let mut attributes = Vec::new();
-        for column in self.columns(database) {
+        for column in self.columns(database)? {
             let attr_tokens = column.generate_struct_field(workspace, database)?;
             attributes.push(attr_tokens);
         }
@@ -387,19 +407,22 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an error if the external type of any column cannot be
-    /// determined.
-    fn unique_indices_macros(&self, database: &Self::DB) -> Vec<proc_macro2::TokenStream> {
+    /// Returns a [`LookupError`] when the unique indices or their columns
+    /// cannot be resolved.
+    fn unique_indices_macros(
+        &self,
+        database: &Self::DB,
+    ) -> Result<Vec<proc_macro2::TokenStream>, LookupError> {
         let mut indices = Vec::new();
-        for unique_index in self.unique_indices(database) {
+        for unique_index in self.unique_indices(database)? {
             // Primary keys already automatically have unique constraints macro
             // generated, so we skip them here.
-            if unique_index.is_primary_key(database) {
+            if unique_index.is_primary_key(database)? {
                 continue;
             }
-            indices.push(unique_index.to_syn(database));
+            indices.push(unique_index.to_syn(database)?);
         }
-        indices
+        Ok(indices)
     }
 
     /// Generates the decorators for the ancestral table list columns of this
@@ -409,27 +432,31 @@ where
     ///
     /// * `database` - The database where the table is defined.
     /// * `workspace` - The workspace where the table is defined.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the extension root table or the tables
+    /// its columns refer to cannot be resolved.
     fn ancestral_table_list_decorator(
         &self,
         database: &Self::DB,
         workspace: &Workspace,
-    ) -> Vec<proc_macro2::TokenStream> {
-        if let Some(table_root) = self.extension_root_table(database) {
-            let current_table_name = self.table_name();
-            let root_table_ident = table_root.table_ident();
-            let root_table_crate = table_root.crate_ident(workspace);
-            table_root
-                .columns_referring_to_table_lists(database)
-                .map(|col| {
-                    let col_ident = col.column_snake_ident();
-                    quote! {
-                        #[table_model(default(#root_table_crate::#root_table_ident::#col_ident, #current_table_name))]
-                    }
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        }
+    ) -> Result<Vec<proc_macro2::TokenStream>, LookupError> {
+        let Some(table_root) = self.extension_root_table(database)? else {
+            return Ok(Vec::new());
+        };
+        let current_table_name = self.table_name();
+        let root_table_ident = table_root.table_ident();
+        let root_table_crate = table_root.crate_ident(workspace);
+        Ok(table_root
+            .columns_referring_to_table_lists(database)?
+            .map(|col| {
+                let col_ident = col.column_snake_ident();
+                quote! {
+                    #[table_model(default(#root_table_crate::#root_table_ident::#col_ident, #current_table_name))]
+                }
+            })
+            .collect::<Vec<_>>())
     }
 
     /// Returns the decorators for the foreign keys of this table, excluding
@@ -439,22 +466,27 @@ where
     ///
     /// * `database` - The database where the table is defined.
     /// * `workspace` - The workspace where the table is defined.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the foreign keys or the tables and
+    /// columns they involve cannot be resolved.
     fn foreign_key_decorators(
         &self,
         database: &Self::DB,
         workspace: &Workspace,
-    ) -> Vec<proc_macro2::TokenStream> {
+    ) -> Result<Vec<proc_macro2::TokenStream>, LookupError> {
         let mut fks = Vec::new();
-        for foreign_key in self.foreign_keys(database) {
-            if foreign_key.is_vertical_same_as(database)
-                || foreign_key.is_horizontal_same_as(database)
-                || foreign_key.is_triangular_same_as(database)
+        for foreign_key in self.foreign_keys(database)? {
+            if foreign_key.is_vertical_same_as(database)?
+                || foreign_key.is_horizontal_same_as(database)?
+                || foreign_key.is_triangular_same_as(database)?
             {
                 continue;
             }
-            fks.push(foreign_key.to_syn(database, workspace));
+            fks.push(foreign_key.to_syn(database, workspace)?);
         }
-        fks
+        Ok(fks)
     }
 
     /// Generates the validation impls for all check constraints of this table.
@@ -473,31 +505,93 @@ where
         workspace: &Workspace,
         database: &Self::DB,
     ) -> Result<Vec<proc_macro2::TokenStream>, crate::Error> {
-        self.columns(database)
-            .filter(|c| c.has_non_tautological_check_constraints(database))
-            .map(|c| c.generate_validation_impl(workspace, database))
-            .collect()
+        let mut validation_impls = Vec::new();
+        for column in self.columns(database)? {
+            if column.has_single_column_check_constraints(database)? {
+                validation_impls.push(column.generate_validation_impl(workspace, database)?);
+            }
+        }
+        Ok(validation_impls)
+    }
+
+    /// Generates the `ValidateRecord` impl checking the constraints that span
+    /// several columns, or `None` when the table has no such constraint.
+    ///
+    /// # Arguments
+    ///
+    /// * `workspace` - The workspace where the table is defined.
+    /// * `database` - The database where the table is defined.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a check constraint cannot be translated.
+    fn generate_record_validation_impl(
+        &self,
+        workspace: &Workspace,
+        database: &Self::DB,
+    ) -> Result<Option<proc_macro2::TokenStream>, crate::Error> {
+        let table_has_surrogate_pk = self.has_surrogate_primary_key(database)?;
+        let mut validations = Vec::new();
+        for check_constraint in self.non_tautological_check_constraints(database)? {
+            if check_constraint.number_of_columns(database)? <= 1
+                || check_constraint.is_mutual_nullability_constraint(database)
+            {
+                continue;
+            }
+            let mut involves_surrogate_key = false;
+            for column in check_constraint.columns(database)? {
+                if table_has_surrogate_pk && column.is_primary_key(database)? {
+                    involves_surrogate_key = true;
+                    break;
+                }
+            }
+            if involves_surrogate_key {
+                continue;
+            }
+            validations.push(check_constraint.to_syn(database, workspace, &[])?);
+        }
+        if validations.is_empty() {
+            return Ok(None);
+        }
+        let table_ident = self.table_snake_ident();
+        Ok(Some(quote! {
+            impl ::diesel_builders::ValidateRecord<#table_ident::table>
+                for <#table_ident::table as ::diesel_builders::TableExt>::NewValues
+            {
+                #[inline]
+                fn validate_record(&self) -> Result<(), ::validation_errors::ValidationError> {
+                    use diesel::Column;
+                    #(#validations)*
+                    Ok(())
+                }
+            }
+        }))
     }
 
     /// Generates the `#[diesel(belongs_to(Foo, foreign_key = mykey))]`
     /// decorators for this table.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the foreign keys or the tables and
+    /// columns they involve cannot be resolved.
     fn generate_belonging_to_decorators(
         &self,
         database: &Self::DB,
         workspace: &Workspace,
-    ) -> Vec<proc_macro2::TokenStream> {
+    ) -> Result<Vec<proc_macro2::TokenStream>, LookupError> {
         let mut decorators = Vec::new();
-        for foreign_key in self.foreign_keys(database) {
-            if foreign_key.is_composite(database) || !foreign_key.is_singleton(database) {
+        for foreign_key in self.foreign_keys(database)? {
+            if foreign_key.is_composite(database)? || !foreign_key.is_singleton(database)? {
                 continue;
             }
             let host_column = foreign_key
-                .host_columns(database)
+                .host_columns(database)?
                 .next()
                 .expect("Expected at least one host column for non-composite foreign key")
                 .column_snake_ident();
-            let referenced_table = foreign_key.referenced_table(database);
-            let foreign_crate_ident = if foreign_key.is_self_referential(database) {
+            let referenced_table = foreign_key.referenced_table(database)?;
+            let foreign_crate_ident = if foreign_key.is_self_referential(database)? {
                 None
             } else {
                 Some(referenced_table.crate_ident(workspace))
@@ -507,7 +601,7 @@ where
                 #[diesel(belongs_to(#foreign_crate_ident::#foreign_table_ident, foreign_key = #host_column))]
             });
         }
-        decorators
+        Ok(decorators)
     }
 
     /// Generates the ancestral primary key column getter functions for this
@@ -526,30 +620,38 @@ where
     ///
     /// * `database` - The database where the table is defined.
     /// * `workspace` - The workspace where the table is defined.
-    fn generate_ancestral_primary_key_column_getters<'db>(
-        &'db self,
-        database: &'db Self::DB,
-        workspace: &'db Workspace,
-    ) -> impl Iterator<Item = proc_macro2::TokenStream> + 'db {
-        self.ancestral_extended_tables(database).into_iter().flat_map(move |t| {
-            t.primary_key_columns(database).zip(self.primary_key_columns(database)).map(
-                move |(ancestor_pk_col, self_pk_col)| {
-                    let struct_ident = self.table_singular_camel_ident();
-                    let table_ident = self.table_snake_ident();
-                    let ancestor_table_ident = t.table_snake_ident();
-                    let ancestor_table_crate_ident = t.crate_ident(workspace);
-                    let ancestor_pk_col_ident = ancestor_pk_col.column_snake_ident();
-                    let self_pk_col_ident = self_pk_col.column_snake_ident();
-                    quote! {
-                        impl ::diesel_builders::GetColumn<#ancestor_table_crate_ident::#ancestor_table_ident::#ancestor_pk_col_ident> for #struct_ident {
-                            fn get_column_ref(&self) -> &<#table_ident::#self_pk_col_ident as ::diesel_builders::ColumnTyped>::ColumnType {
-                                &self.#self_pk_col_ident
-                            }
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the ancestral tables or the primary key
+    /// columns cannot be resolved.
+    fn generate_ancestral_primary_key_column_getters(
+        &self,
+        database: &Self::DB,
+        workspace: &Workspace,
+    ) -> Result<Vec<proc_macro2::TokenStream>, LookupError> {
+        let struct_ident = self.table_singular_camel_ident();
+        let table_ident = self.table_snake_ident();
+        let self_primary_key_columns = self.primary_key_columns(database)?.collect::<Vec<_>>();
+        let mut getters = Vec::new();
+        for ancestor in self.ancestral_extended_tables(database)? {
+            let ancestor_table_ident = ancestor.table_snake_ident();
+            let ancestor_table_crate_ident = ancestor.crate_ident(workspace);
+            for (ancestor_pk_col, self_pk_col) in
+                ancestor.primary_key_columns(database)?.zip(self_primary_key_columns.iter())
+            {
+                let ancestor_pk_col_ident = ancestor_pk_col.column_snake_ident();
+                let self_pk_col_ident = self_pk_col.column_snake_ident();
+                getters.push(quote! {
+                    impl ::diesel_builders::GetColumn<#ancestor_table_crate_ident::#ancestor_table_ident::#ancestor_pk_col_ident> for #struct_ident {
+                        fn get_column_ref(&self) -> &<#table_ident::#self_pk_col_ident as ::diesel_builders::ColumnTyped>::ColumnType {
+                            &self.#self_pk_col_ident
                         }
                     }
-                },
-            )
-        })
+                });
+            }
+        }
+        Ok(getters)
     }
 }
 

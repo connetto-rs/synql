@@ -1,7 +1,10 @@
 //! Submodule providing the `TriangularSameAsTableLike` trait for working
 //! with tables that have triangular same-as relationships.
 
-use sql_traits::traits::{DatabaseLike, TableLike};
+use sql_traits::{
+    errors::LookupError,
+    traits::{DatabaseLike, TableLike},
+};
 
 use crate::traits::TriangularSameAsForeignKeyLike;
 
@@ -39,20 +42,32 @@ where
     /// );
     /// ",
     /// )?;
-    /// let child = db.table(None, "child").unwrap();
-    /// let triangular_fks = child.triangular_same_as_foreign_keys(&db).collect::<Vec<_>>();
+    /// let child =
+    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let triangular_fks = child.triangular_same_as_foreign_keys(&db)?.collect::<Vec<_>>();
     /// assert_eq!(triangular_fks.len(), 1, "Expected exactly one triangular same-as foreign key");
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the foreign keys of the table or the
+    /// tables they reference cannot be resolved.
     fn triangular_same_as_foreign_keys<'db>(
         &'db self,
         database: &'db Self::DB,
-    ) -> impl Iterator<Item = &'db <Self::DB as DatabaseLike>::ForeignKey>
+    ) -> Result<impl Iterator<Item = &'db <Self::DB as DatabaseLike>::ForeignKey>, LookupError>
     where
         Self: 'db,
     {
-        self.foreign_keys(database).filter(|fk| fk.is_triangular_same_as(database))
+        let mut foreign_keys = Vec::new();
+        for foreign_key in self.foreign_keys(database)? {
+            if foreign_key.is_triangular_same_as(database)? {
+                foreign_keys.push(foreign_key);
+            }
+        }
+        Ok(foreign_keys.into_iter())
     }
 }
 

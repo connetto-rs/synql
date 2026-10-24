@@ -35,7 +35,7 @@ edition.workspace = true
         writeln!(buffer, "\n[dependencies]")?;
 
         for table in tables {
-            if self.skip_table(table) {
+            if self.skip_table(table)? {
                 continue;
             }
             let crate_name = table.crate_name(workspace);

@@ -11,9 +11,7 @@ impl ExternalCrate {
     pub fn rosetta_uuid() -> ExternalCrate {
         ExternalCrate::new("rosetta-uuid")
             .unwrap()
-            .version("0.1.2")
-            .unwrap()
-            .git("https://github.com/earth-metabolome-initiative/rosetta-uuid", "main")
+            .version("0.2.0")
             .unwrap()
             .features(["diesel", "serde", "sqlite"])
             .types([ExternalType::new(

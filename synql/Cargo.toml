@@ -30,6 +30,7 @@ enumflags2.workspace = true
 tempfile = "3.6"
 insta = "1.46"
 sql-rules.workspace = true
+sql-traits = { workspace = true, features = ["git"] }
 
 [lints]
 workspace = true

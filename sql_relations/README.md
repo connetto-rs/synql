@@ -1,6 +1,6 @@
 # SQL Relations
 
-**SQL Relations** provides semantic abstractions over SQL foreign key relationships, extending the schema introspection capabilities of [sql-traits](https://github.com/earth-metabolome-initiative/sql-traits). It focuses on identifying and categorizing "Same As" relationships—where data in one table is semantically equivalent to data in another—enabling the modeling of complex schema patterns like inheritance and triangulation.
+**SQL Relations** provides semantic abstractions over SQL foreign key relationships, extending the schema introspection capabilities of [sql-traits](https://github.com/connetto-rs/sql-traits). It focuses on identifying and categorizing "Same As" relationships—where data in one table is semantically equivalent to data in another—enabling the modeling of complex schema patterns like inheritance and triangulation.
 
 ## Core Concepts
 
@@ -37,18 +37,19 @@ let db = ParserDB::parse::<GenericDialect>(
   FOREIGN KEY (id, name) REFERENCES parent(id, name)
  );
  ",
-).unwrap();
+)?;
 
-let child_table = db.table(None, "child").unwrap();
-let foreign_keys: Vec<_> = child_table.foreign_keys(&db).collect();
+let child_table = db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
 
 // id -> parent(id) [Extension]
 // (id, name) -> parent(id, name) [Vertical Same As]
-let vertical_fk = foreign_keys.iter()
- .find(|fk| fk.is_vertical_same_as(&db))
+let vertical_fk = child_table
+ .vertical_same_as_foreign_keys(&db)?
+ .next()
  .expect("Should identify vertical same-as FK");
 
-assert_eq!(vertical_fk.referenced_columns(&db).count(), 2);
+assert_eq!(vertical_fk.referenced_columns(&db)?.count(), 2);
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ```mermaid
@@ -95,17 +96,18 @@ let db = ParserDB::parse::<GenericDialect>(
   FOREIGN KEY (brother_id, child_name) REFERENCES brother(id, brother_name)
  );
  ",
-).unwrap();
+)?;
 
-let child_table = db.table(None, "child").unwrap();
-let foreign_keys: Vec<_> = child_table.foreign_keys(&db).collect();
+let child_table = db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
 
-let horizontal_fk = foreign_keys.iter()
- .find(|fk| fk.is_horizontal_same_as(&db))
+let horizontal_fk = child_table
+ .horizontal_same_as_foreign_keys(&db)?
+ .next()
  .expect("Should identify horizontal same-as FK");
 
 // (brother_id, child_name) -> brother(id, brother_name)
-assert_eq!(horizontal_fk.referenced_columns(&db).count(), 2);
+assert_eq!(horizontal_fk.referenced_columns(&db)?.count(), 2);
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ```mermaid
@@ -166,17 +168,18 @@ let db = ParserDB::parse::<GenericDialect>(
   FOREIGN KEY (sibling_id, id) REFERENCES sibling(id, grandparent_id)
  );
  ",
-).unwrap();
+)?;
 
-let child_table = db.table(None, "child").unwrap();
-let foreign_keys: Vec<_> = child_table.foreign_keys(&db).collect();
+let child_table = db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
 
-let triangular_fk = foreign_keys.iter()
- .find(|fk| fk.is_triangular_same_as(&db))
+let triangular_fk = child_table
+ .triangular_same_as_foreign_keys(&db)?
+ .next()
  .expect("Should identify triangular same-as FK");
 
 // This checks if the triangularity is mandatory (enforced by constraint)
-assert!(triangular_fk.triangular_same_as(&db).unwrap().is_mandatory());
+assert!(triangular_fk.triangular_same_as(&db)?.unwrap().is_mandatory());
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ```mermaid
@@ -201,13 +204,13 @@ erDiagram
 
 ## Dependencies
 
-* **[sql-traits](https://github.com/earth-metabolome-initiative/sql-traits)**: Provides the fundamental database introspection traits (`TableLike`, `ForeignKeyLike`, etc.) that this crate extends with semantic logic.
+* **[sql-traits](https://github.com/connetto-rs/sql-traits)**: Provides the fundamental database introspection traits (`TableLike`, `ForeignKeyLike`, etc.) that this crate extends with semantic logic.
 
 ## Usage
 
-This crate is a core component of [SynQL](https://github.com/earth-metabolome-initiative/synql), used to generate type-safe Rust comparisons and builder patterns that respect these semantic relationships.
+This crate is a core component of [SynQL](https://github.com/connetto-rs/synql), used to generate type-safe Rust comparisons and builder patterns that respect these semantic relationships.
 
 ```toml
 [dependencies]
-sql_relations = { git = "https://github.com/earth-metabolome-initiative/synql" }
+sql_relations = { git = "https://github.com/connetto-rs/synql" }
 ```

@@ -1,7 +1,10 @@
 //! Submodule defining the `SameAsIndex` trait which characterizes whether an
 //! index can be used to define a same-as relationship.
 
-use sql_traits::traits::{TableLike, UniqueIndexLike};
+use sql_traits::{
+    errors::LookupError,
+    traits::{TableLike, UniqueIndexLike},
+};
 
 /// Trait characterizing whether an index can be used to define a same-as
 /// relationship, i.e. it is a unique index over a single column.
@@ -30,23 +33,41 @@ pub trait SameAsIndexLike: UniqueIndexLike {
     /// ",
     /// )?;
     ///
-    /// let table_with_same_as = db.table(None, "with_same_as").unwrap();
-    /// let same_as_indices = table_with_same_as.same_as_indices(&db).collect::<Vec<_>>();
+    /// let table_with_same_as = db
+    ///     .table_by_target(TargetName::new("with_same_as", false), IdentifierCase::AsWritten)?
+    ///     .unwrap();
+    /// let same_as_indices = table_with_same_as.same_as_indices(&db)?.collect::<Vec<_>>();
     /// assert_eq!(same_as_indices.len(), 1, "Expected exactly one same-as index");
     ///
-    /// let table_no_same_as_one = db.table(None, "no_same_as_one").unwrap();
-    /// assert_eq!(table_no_same_as_one.same_as_indices(&db).count(), 0, "Expected no same-as indices");
-    /// let table_no_same_as_two = db.table(None, "no_same_as_two").unwrap();
-    /// assert_eq!(table_no_same_as_two.same_as_indices(&db).count(), 0, "Expected no same-as indices");
-    /// let table_no_same_as_three = db.table(None, "no_same_as_three").unwrap();
+    /// let table_no_same_as_one = db
+    ///     .table_by_target(TargetName::new("no_same_as_one", false), IdentifierCase::AsWritten)?
+    ///     .unwrap();
     /// assert_eq!(
-    ///     table_no_same_as_three.same_as_indices(&db).count(),
+    ///     table_no_same_as_one.same_as_indices(&db)?.count(),
     ///     0,
     ///     "Expected no same-as indices"
     /// );
-    /// let table_no_same_as_four = db.table(None, "no_same_as_four").unwrap();
+    /// let table_no_same_as_two = db
+    ///     .table_by_target(TargetName::new("no_same_as_two", false), IdentifierCase::AsWritten)?
+    ///     .unwrap();
     /// assert_eq!(
-    ///     table_no_same_as_four.same_as_indices(&db).count(),
+    ///     table_no_same_as_two.same_as_indices(&db)?.count(),
+    ///     0,
+    ///     "Expected no same-as indices"
+    /// );
+    /// let table_no_same_as_three = db
+    ///     .table_by_target(TargetName::new("no_same_as_three", false), IdentifierCase::AsWritten)?
+    ///     .unwrap();
+    /// assert_eq!(
+    ///     table_no_same_as_three.same_as_indices(&db)?.count(),
+    ///     0,
+    ///     "Expected no same-as indices"
+    /// );
+    /// let table_no_same_as_four = db
+    ///     .table_by_target(TargetName::new("no_same_as_four", false), IdentifierCase::AsWritten)?
+    ///     .unwrap();
+    /// assert_eq!(
+    ///     table_no_same_as_four.same_as_indices(&db)?.count(),
     ///     0,
     ///     "Expected no same-as indices"
     /// );
@@ -54,22 +75,27 @@ pub trait SameAsIndexLike: UniqueIndexLike {
     /// # Ok(())
     /// # }
     /// ```
-    fn is_same_as(&self, database: &Self::DB) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the columns of the index or of the
+    /// primary key of its table cannot be resolved.
+    fn is_same_as(&self, database: &Self::DB) -> Result<bool, LookupError> {
         // Next, we retrieve the columns associated with the index.
-        let columns = self.columns(database).collect::<Vec<_>>();
+        let columns = self.columns(database)?.collect::<Vec<_>>();
 
         // We expect that all of the columns in the primary key of the table are
         // also in the index.
         let primary_key_columns =
-            self.table(database).primary_key_columns(database).collect::<Vec<_>>();
+            self.table(database).primary_key_columns(database)?.collect::<Vec<_>>();
 
         if columns.len() <= primary_key_columns.len() {
-            return false;
+            return Ok(false);
         }
 
         // If any of the primary key columns are not in the index, it cannot be
         // a same-as index
-        primary_key_columns.iter().all(|pk_col| columns.contains(pk_col))
+        Ok(primary_key_columns.iter().all(|pk_col| columns.contains(pk_col)))
     }
 }
 

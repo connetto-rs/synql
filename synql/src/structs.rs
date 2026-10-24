@@ -15,6 +15,6 @@ pub use external_function_ref::ExternalFunctionRef;
 mod external_function;
 pub use external_function::ExternalFunction;
 mod errors;
-pub use errors::Error;
+pub use errors::{Error, UnsupportedCheck};
 mod toml_dependency;
 pub use toml_dependency::TomlDependency;

@@ -1,23 +1,31 @@
 //! Test to verify that tables with composite multi-column check constraints
-//! are generated correctly.
+//! validate them on the whole record and compile, except constraints on a
+//! surrogate key, which the record cannot know before insertion.
+
+use std::process::Command;
 
 use sql_traits::prelude::ParserDB;
 use sqlparser::dialect::GenericDialect;
 use synql::prelude::*;
 
 #[test]
-fn test_multi_column_check_constraint() -> Result<(), Box<dyn std::error::Error>> {
+fn test_multi_column_check_constraint() {
     let db = ParserDB::parse::<GenericDialect>(
         "
     CREATE TABLE test_table (
         id INT PRIMARY KEY,
         value1 INT,
         value2 INT,
-        CHECK (value1 + value2 > 0),
         CHECK (value1 < value2)
     );
+    CREATE TABLE nodes (
+        id SERIAL PRIMARY KEY,
+        parent_id INT,
+        CHECK (id <> parent_id)
+    );
 ",
-    )?;
+    )
+    .expect("Unable to parse the schema");
 
     let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
     let workspace_path = temp_dir.path().join("synql_multi_column_check");
@@ -29,37 +37,41 @@ fn test_multi_column_check_constraint() -> Result<(), Box<dyn std::error::Error>
         .into();
     synql.generate().expect("Unable to generate workspace");
 
-    let crate_name = "synql-multi-column-check-test_table";
-    let rs_path = workspace_path.join(crate_name).join("src").join("lib.rs");
-
+    let rs_path =
+        workspace_path.join("synql-multi-column-check-test_table").join("src").join("lib.rs");
     let content = std::fs::read_to_string(&rs_path)
         .unwrap_or_else(|e| panic!("Could not read file at {rs_path:?}: {e}"));
-
     let normalized: String = content.chars().filter(|c| !c.is_whitespace()).collect();
 
-    let expected_impl_value1 = "impl :: diesel_builders :: ValidateColumn < test_table :: value1 >                                 for < test_table :: table as :: diesel_builders :: TableExt > :: NewValues";
-    let expected_impl_value1_norm: String =
-        expected_impl_value1.chars().filter(|c| !c.is_whitespace()).collect();
-
     assert!(
-        normalized.contains(&expected_impl_value1_norm),
-        "Missing ValidateColumn impl for value1"
+        normalized.contains(
+            "impl::diesel_builders::ValidateRecord<test_table::table>for<test_table::tableas::diesel_builders::TableExt>::NewValues"
+        ),
+        "Missing ValidateRecord impl. Found:\n{content}"
+    );
+    assert!(
+        !normalized.contains("ValidateColumn<test_table::value1>"),
+        "A column with only multi-column checks must not validate alone. Found:\n{content}"
+    );
+    assert!(normalized.contains("value1>=value2"), "Missing order check. Found:\n{content}");
+
+    let nodes_path =
+        workspace_path.join("synql-multi-column-check-nodes").join("src").join("lib.rs");
+    let nodes = std::fs::read_to_string(&nodes_path)
+        .unwrap_or_else(|e| panic!("Could not read file at {nodes_path:?}: {e}"));
+    assert!(
+        !nodes.contains("ValidateRecord"),
+        "A check on the surrogate key must not validate the record. Found:\n{nodes}"
     );
 
+    let output = Command::new("cargo")
+        .arg("check")
+        .current_dir(&workspace_path)
+        .output()
+        .expect("Unable to run cargo check");
     assert!(
-        normalized.contains("value1+value2>0"),
-        "Missing check 1 logic (sum > 0). Found:\n{content}"
+        output.status.success(),
+        "cargo check failed for the generated workspace:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-
-    assert!(
-        normalized.contains("strictly_smaller_than"),
-        "Missing strictly_smaller_than validation error. Found:\n{content}"
-    );
-
-    assert!(
-        normalized.contains("value1>=value2"),
-        "Missing negated check logic (value1 >= value2). Found:\n{content}"
-    );
-
-    Ok(())
 }

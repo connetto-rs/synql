@@ -85,22 +85,63 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         SynQLBuilder::new(database, path, crate_base_path)
     }
 
-    fn skip_table(&self, table: &DB::Table) -> bool {
+    fn skip_table(&self, table: &DB::Table) -> Result<bool, crate::Error> {
         for deny_table in &self.deny_list {
-            if table.depends_on(self.database, deny_table) {
-                return true;
+            if table.depends_on(self.database, deny_table)? {
+                return Ok(true);
             }
         }
-        false
+        Ok(false)
+    }
+
+    /// Returns the tables whose crates the crate of `table` depends on.
+    ///
+    /// These are the referenced tables, the extended ancestors and the spouses
+    /// whose pair this crate owns. A spouse pair belongs to the table depending
+    /// on the other, or to the smaller table when neither depends on the
+    /// other, so that each pair gets a single owner and no crate cycle forms.
+    /// The crate of `table` also declares each of these tables as joinable
+    /// with its own.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the related tables cannot be resolved.
+    fn crate_dependencies<'a>(
+        &'a self,
+        table: &'a DB::Table,
+    ) -> Result<Vec<&'a DB::Table>, crate::Error> {
+        let mut candidates = table
+            .referenced_tables(self.database)?
+            .into_iter()
+            .chain(table.ancestral_extended_tables(self.database)?)
+            .collect::<Vec<_>>();
+        for spouse in table.spouses(self.database)? {
+            if table.depends_on(self.database, spouse)?
+                || table < spouse && !spouse.depends_on(self.database, table)?
+            {
+                candidates.push(spouse);
+            }
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+
+        let mut dependencies = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            if candidate != table && !self.skip_table(candidate)? {
+                dependencies.push(candidate);
+            }
+        }
+        Ok(dependencies)
     }
 
     /// Writes the workspace TOML.
     ///
     /// # Errors
     ///
-    /// Returns an `std::io::Error` if writing to the file fails.
+    /// Returns an error if writing to the file fails or if the tables cannot be
+    /// resolved in the database.
     #[allow(clippy::too_many_lines)]
-    pub fn write_toml(&self, workspace: &Workspace) -> std::io::Result<()> {
+    pub fn write_toml(&self, workspace: &Workspace) -> Result<(), crate::Error> {
         use std::io::Write;
 
         let toml_path = self.path.join("Cargo.toml");
@@ -118,16 +159,15 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             if wrote {
                 write!(buffer, ", ")?;
             }
-            if let Some(path) = member.get_path() {
-                write!(buffer, "\"{path}\"")?;
-            } else {
-                return Err(std::io::Error::other("Workspace member MUST start with a path"));
-            }
+            let Some(path) = member.get_path() else {
+                return Err(crate::Error::WorkspaceMemberWithoutPath(member.name().to_owned()));
+            };
+            write!(buffer, "\"{path}\"")?;
             wrote = true;
         }
 
         for table in self.database.tables() {
-            if self.skip_table(table) {
+            if self.skip_table(table)? {
                 continue;
             }
             if wrote {
@@ -146,8 +186,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         }
 
         if let Some(prefix) = &self.dag_sink_crate_prefix {
-            for root_table in self.database.root_tables() {
-                if self.skip_table(root_table) {
+            for root_table in self.database.root_tables()? {
+                if self.skip_table(root_table)? {
                     continue;
                 }
                 let root_name = root_table.table_snake_name();
@@ -181,7 +221,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
         // Write internal crate dependencies
         for table in self.database.tables() {
-            if self.skip_table(table) {
+            if self.skip_table(table)? {
                 continue;
             }
             writeln!(buffer, "{}", table.crate_dependency(workspace))?;
@@ -194,6 +234,17 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             }
 
             writeln!(buffer, "{}", external_crate.as_ref())?;
+        }
+        writeln!(buffer)?;
+
+        // A published crate followed on git is patched for its crates.io
+        // dependents too, so the workspace builds a single copy of it.
+        writeln!(buffer, "[patch.crates-io]")?;
+        for external_crate in workspace.external_crates() {
+            let dependency: &TomlDependency = external_crate.as_ref();
+            if let Some(patch) = dependency.crates_io_patch() {
+                writeln!(buffer, "{patch}")?;
+            }
         }
         writeln!(buffer)?;
 
@@ -228,42 +279,29 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the workspace cannot be written to disk.
+    /// Returns an error if the workspace cannot be written to disk or if the
+    /// schema cannot be resolved.
     pub fn generate(&self) -> Result<TimeTracker, crate::Error> {
-        let maximum_number_of_columns: MaximalNumberOfColumns = self
-            .database
-            .tables()
-            .filter_map(|table| {
-                if self.skip_table(table) {
-                    None
-                } else {
-                    Some(table.number_of_columns(self.database))
-                }
-            })
-            .max()
-            .unwrap_or(0)
-            .try_into()?;
-
-        let maximum_number_of_columns_in_hierarchy: MaximalNumberOfColumns = self
-            .database
-            .tables()
-            .filter_map(|table| {
-                if self.skip_table(table) {
-                    None
-                } else {
-                    Some(
-                        table
-                            .ancestral_extended_tables(self.database)
-                            .iter()
-                            .map(|ancestor_table| ancestor_table.number_of_columns(self.database))
-                            .sum::<usize>()
-                            + table.number_of_columns(self.database),
-                    )
-                }
-            })
-            .max()
-            .unwrap_or(0)
-            .try_into()?;
+        let mut maximum_number_of_columns = 0;
+        let mut maximum_number_of_columns_in_hierarchy = 0;
+        for table in self.database.tables() {
+            if self.skip_table(table)? {
+                continue;
+            }
+            let number_of_columns = table.number_of_columns(self.database)?;
+            let mut number_of_columns_in_hierarchy = number_of_columns;
+            for ancestor_table in table.ancestral_extended_tables(self.database)? {
+                number_of_columns_in_hierarchy +=
+                    ancestor_table.number_of_columns(self.database)?;
+            }
+            maximum_number_of_columns = maximum_number_of_columns.max(number_of_columns);
+            maximum_number_of_columns_in_hierarchy =
+                maximum_number_of_columns_in_hierarchy.max(number_of_columns_in_hierarchy);
+        }
+        let maximum_number_of_columns: MaximalNumberOfColumns =
+            maximum_number_of_columns.try_into()?;
+        let maximum_number_of_columns_in_hierarchy: MaximalNumberOfColumns =
+            maximum_number_of_columns_in_hierarchy.try_into()?;
 
         let workspace: Workspace = Workspace::new()
             .path(self.path.to_path_buf())
@@ -279,7 +317,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             .serde()
             .serde_json()
             .validation_errors()
-            .postgis_diesel(maximum_number_of_columns)
+            .sqlitegis(maximum_number_of_columns)
             .diesel_builders(maximum_number_of_columns_in_hierarchy)
             .rosetta_uuid()
             .version(self.version.0, self.version.1, self.version.2)
@@ -306,8 +344,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
         let mut time_tracker = TimeTracker::new("SQL Workspace Generation");
 
-        for table in self.database.table_dag() {
-            if self.skip_table(table) {
+        for table in self.database.table_dag()? {
+            if self.skip_table(table)? {
                 continue;
             }
 
@@ -348,8 +386,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         }
 
         if let Some(prefix) = &self.dag_sink_crate_prefix {
-            for root_table in self.database.root_tables() {
-                if self.skip_table(root_table) {
+            for root_table in self.database.root_tables()? {
+                if self.skip_table(root_table)? {
                     continue;
                 }
                 let root_name = root_table.table_snake_name();
@@ -358,14 +396,14 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
                     workspace.path().join(workspace.crate_base_path()).join(&sink_crate_name);
                 std::fs::create_dir_all(&sink_crate_path)?;
 
-                // We identify the tables which are part of the DAG rooted at
-                // `root_table`.
-                let dag_tables = || {
-                    self.database.tables().filter(|table| {
-                        table.table_name() == root_table.table_name()
-                            || table.depends_on(self.database, root_table)
-                    })
-                };
+                let mut dag_tables = Vec::new();
+                for table in self.database.tables() {
+                    if table.table_name() == root_table.table_name()
+                        || table.depends_on(self.database, root_table)?
+                    {
+                        dag_tables.push(table);
+                    }
+                }
 
                 let writing_sink_toml =
                     Task::new(&format!("writing_sink_crate_toml_{sink_crate_name}"));
@@ -373,7 +411,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
                     &workspace,
                     &sink_crate_name,
                     &sink_crate_path,
-                    dag_tables(),
+                    dag_tables.iter().copied(),
                 )?;
                 time_tracker.add_or_extend_completed_task(writing_sink_toml);
 
@@ -383,7 +421,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
                     &workspace,
                     &sink_crate_name,
                     &sink_crate_path,
-                    dag_tables(),
+                    dag_tables.iter().copied(),
                 )?;
                 time_tracker.add_or_extend_completed_task(writing_sink_lib);
             }
