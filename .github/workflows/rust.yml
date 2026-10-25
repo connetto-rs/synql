@@ -18,7 +18,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-26.04, macos-latest]
         rust: [stable, nightly]
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -29,7 +29,7 @@ jobs:
 
   fmt:
     name: Rustfmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Install Rust
@@ -41,7 +41,7 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Install Rust
@@ -57,7 +57,7 @@ jobs:
 
   doc:
     name: Documentation
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Install Rust
@@ -73,7 +73,7 @@ jobs:
 
   coverage:
     name: Code Coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
     - name: Install Rust
