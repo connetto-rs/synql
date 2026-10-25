@@ -21,7 +21,7 @@ jobs:
         os: [ubuntu-26.04, macos-latest]
         rust: [stable, nightly]
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Install Rust
       uses: dtolnay/rust-toolchain@master
       with:
@@ -31,7 +31,7 @@ jobs:
     name: Rustfmt
     runs-on: ubuntu-26.04
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Install Rust
       uses: dtolnay/rust-toolchain@nightly
       with:
@@ -43,7 +43,7 @@ jobs:
     name: Clippy
     runs-on: ubuntu-26.04
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
       with:
@@ -59,7 +59,7 @@ jobs:
     name: Documentation
     runs-on: ubuntu-26.04
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
     - name: Install dependencies
@@ -75,13 +75,13 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-26.04
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Install Rust
       uses: dtolnay/rust-toolchain@nightly
       with:
         components: llvm-tools-preview, rustfmt
     - name: Install cargo-llvm-cov
-      uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
       with:
         tool: cargo-llvm-cov
     - name: Install dependencies
@@ -94,7 +94,7 @@ jobs:
         cargo llvm-cov --workspace --all-targets --no-report
         cargo llvm-cov --workspace --doc --no-clean --lcov --output-path target/coverage/coverage.lcov
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: target/coverage/coverage.lcov
