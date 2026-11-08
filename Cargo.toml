@@ -4,7 +4,6 @@ members = ["synql", "sql_relations"]
 
 [workspace.dependencies]
 sql-traits = {git = "https://github.com/connetto-rs/sql-traits", branch = "main" }
-sql-rules = { git = "https://github.com/connetto-rs/sql-rules", branch = "main" }
 sql_relations = { path = "sql_relations" }
 syn = { version = "2.0", features = ["full", "visit-mut", "extra-traits"] }
 chrono = { version = "0.4.39", features = ["serde"] }

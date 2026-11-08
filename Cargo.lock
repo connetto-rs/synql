@@ -1004,17 +1004,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 
 [[package]]
-name = "sql-rules"
-version = "0.1.0"
-source = "git+https://github.com/connetto-rs/sql-rules?branch=main#edc8870d615fc7e3ba187cda3e6d684f9fbcf85f"
-dependencies = [
- "heck",
- "inflection-rs",
- "sql-traits",
- "thiserror",
-]
-
-[[package]]
 name = "sql-traits"
 version = "0.1.0"
 source = "git+https://github.com/connetto-rs/sql-traits?branch=main#b22af79df1378c469fb6cfa5cd2a66f793ed73b6"
@@ -1135,7 +1124,6 @@ dependencies = [
  "insta",
  "proc-macro2",
  "quote",
- "sql-rules",
  "sql-traits",
  "sql_relations",
  "sqlparser",
