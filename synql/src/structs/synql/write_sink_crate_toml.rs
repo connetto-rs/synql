@@ -1,6 +1,6 @@
 //! Submodule implementing the writing of the sink crate toml files.
 
-use std::{io::Write, path::Path};
+use std::{collections::HashSet, io::Write, path::Path};
 
 use crate::{
     structs::{SynQL, Workspace},
@@ -34,12 +34,16 @@ edition.workspace = true
         // Add dependencies
         writeln!(buffer, "\n[dependencies]")?;
 
+        let mut written = HashSet::new();
         for table in tables {
             if self.skip_table(table)? {
                 continue;
             }
             let crate_name = table.crate_name(workspace);
-            writeln!(buffer, "{crate_name}.workspace = true")?;
+            if !written.contains(&crate_name) {
+                writeln!(buffer, "{crate_name}.workspace = true")?;
+                written.insert(crate_name);
+            }
         }
 
         // Linting

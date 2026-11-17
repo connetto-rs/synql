@@ -1,11 +1,12 @@
 //! Submodule defining the `SQLWorkspace` trait which allows to generate the
 //! `diesel` workspace from a SQL schema, based on `sql_traits`.
 
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use proc_macro2::TokenStream;
 
 mod builder;
+mod table_crates;
 mod write_crate_lib;
 mod write_crate_toml;
 mod write_enum_crate;
@@ -57,6 +58,9 @@ pub struct SynQL<'db, DB: SynQLDatabaseLike> {
     dag_sink_crate_prefix: Option<String>,
     /// External rust crates to include in the workspace.
     external_crates: Vec<ExternalCrate>,
+    /// Modularity resolution at which tables are grouped into shared crates,
+    /// if they are grouped at all.
+    table_grouping_resolution: Option<f64>,
     /// Whether to clear workspace directory if it already exists.
     clear_existing: bool,
     /// Additional workspace members.
@@ -167,15 +171,13 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             wrote = true;
         }
 
-        for table in self.database.tables() {
-            if self.skip_table(table)? {
-                continue;
-            }
+        let crates = self.crates(workspace)?;
+        for tables in &crates {
             if wrote {
                 write!(buffer, ", ")?;
             }
 
-            write!(buffer, "\"{}\"", table.crate_relative_path(workspace).display())?;
+            write!(buffer, "\"{}\"", tables[0].crate_relative_path(workspace).display())?;
             wrote = true;
         }
 
@@ -230,11 +232,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         }
 
         // Write internal crate dependencies
-        for table in self.database.tables() {
-            if self.skip_table(table)? {
-                continue;
-            }
-            writeln!(buffer, "{}", table.crate_dependency(workspace))?;
+        for tables in &crates {
+            writeln!(buffer, "{}", tables[0].crate_dependency(workspace))?;
         }
         for user_defined_type in self.enum_types(workspace) {
             writeln!(buffer, "{}", user_defined_type.enum_crate_dependency(workspace))?;
@@ -316,6 +315,10 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         let maximum_number_of_columns_in_hierarchy: MaximalNumberOfColumns =
             maximum_number_of_columns_in_hierarchy.try_into()?;
 
+        let crate_tables = match self.table_grouping_resolution {
+            Some(resolution) => self.grouped_crate_tables(resolution)?,
+            None => HashMap::new(),
+        };
         let mut workspace: Workspace = Workspace::new()
             .path(self.path.to_path_buf())
             .crate_base_path(self.crate_base_path.to_path_buf())
@@ -335,6 +338,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             .rosetta_uuid()
             .version(self.version.0, self.version.1, self.version.2)
             .edition(self.edition)
+            .crate_tables(crate_tables)
             .into();
         // The enum types of the schema come last, and none is generated for a
         // type name a crate of the workspace already maps. Each enum crate
@@ -405,20 +409,16 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             time_tracker.add_or_extend_completed_task(writing_enum_crate);
         }
 
-        for table in self.database.table_dag()? {
-            if self.skip_table(table)? {
-                continue;
-            }
-
+        for tables in self.crates(&workspace)? {
             // Create the directory for the crate
-            let crate_path = table.crate_absolute_path(&workspace);
+            let crate_path = tables[0].crate_absolute_path(&workspace);
             std::fs::create_dir_all(&crate_path)?;
 
             let writing_toml = Task::new("writing_crate_toml");
-            self.write_crate_toml(table, &workspace)?;
+            self.write_crate_toml(&tables, &workspace)?;
             time_tracker.add_or_extend_completed_task(writing_toml);
             let writing_lib = Task::new("writing_crate_lib");
-            self.write_crate_lib(table, &workspace)?;
+            self.write_crate_lib(&tables, &workspace)?;
             time_tracker.add_or_extend_completed_task(writing_lib);
         }
 

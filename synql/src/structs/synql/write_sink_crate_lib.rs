@@ -1,6 +1,6 @@
 //! Submodule implementing the writing of the sink crate library files.
 
-use std::{io::Write, path::Path};
+use std::{collections::HashSet, io::Write, path::Path};
 
 use quote::quote;
 
@@ -32,6 +32,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         );
 
         let mut re_exports = Vec::new();
+        let mut re_exported_crates = HashSet::new();
         for table in tables {
             if self.skip_table(table)? {
                 continue;
@@ -39,8 +40,10 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             let crate_ident = table.crate_ident(workspace);
             let table_struct_ident = table.table_singular_camel_ident();
             let table_ident = table.table_ident();
+            if re_exported_crates.insert(crate_ident.to_string()) {
+                re_exports.push(quote! { pub use #crate_ident; });
+            }
             re_exports.push(quote! {
-                pub use #crate_ident;
                 pub use #crate_ident::#table_ident;
                 pub use #crate_ident::#table_struct_ident;
             });

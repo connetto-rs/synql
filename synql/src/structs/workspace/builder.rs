@@ -1,6 +1,6 @@
 //! Submodule defining a builder for the `Workspace` struct.
 
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::structs::{ExternalCrate, Workspace, external_crate::MaximalNumberOfColumns};
 
@@ -18,6 +18,9 @@ pub struct WorkspaceBuilder {
     version: (u8, u8, u8),
     /// Edition of the workspace.
     edition: u16,
+    /// The snake-cased name of the table naming the crate of each table
+    /// grouped with others.
+    crate_tables: HashMap<String, String>,
 }
 
 impl Default for WorkspaceBuilder {
@@ -29,6 +32,7 @@ impl Default for WorkspaceBuilder {
             crate_base_path: PathBuf::from("."),
             version: (0, 1, 0),
             edition: 2024,
+            crate_tables: HashMap::new(),
         }
     }
 }
@@ -102,6 +106,17 @@ impl WorkspaceBuilder {
     #[must_use]
     pub fn edition(mut self, edition: u16) -> Self {
         self.edition = edition;
+        self
+    }
+
+    /// Sets the crate of each table grouped with others.
+    ///
+    /// # Arguments
+    /// * `crate_tables` - Maps the snake-cased name of each grouped table to
+    ///   the snake-cased name of the table naming its crate.
+    #[must_use]
+    pub fn crate_tables(mut self, crate_tables: HashMap<String, String>) -> Self {
+        self.crate_tables = crate_tables;
         self
     }
 
@@ -215,6 +230,7 @@ impl From<WorkspaceBuilder> for Workspace {
             crate_base_path: builder.crate_base_path,
             version: builder.version,
             edition: builder.edition,
+            crate_tables: builder.crate_tables,
         }
     }
 }

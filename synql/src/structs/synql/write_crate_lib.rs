@@ -2,6 +2,7 @@
 
 use std::io::Write;
 
+use proc_macro2::TokenStream;
 use quote::quote;
 use sql_relations::prelude::{ColumnLike, TableLike};
 
@@ -11,25 +12,66 @@ use crate::{
 };
 
 impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
-    #[allow(clippy::too_many_lines)]
+    /// Writes the `lib.rs` of the crate holding `tables`.
     pub(super) fn write_crate_lib(
         &self,
-        table: &DB::Table,
+        tables: &[&DB::Table],
         workspace: &Workspace,
     ) -> Result<(), crate::Error> {
         // We create the `src` directory if it does not exist
-        let crate_path = table.crate_absolute_path(workspace);
+        let crate_path = tables[0].crate_absolute_path(workspace);
         let src_path = crate_path.join("src");
         std::fs::create_dir_all(&src_path)?;
         // We create the `lib.rs` file
         let lib_rs_path = src_path.join("lib.rs");
         let mut buffer = std::fs::File::create(lib_rs_path)?;
 
+        let allow_non_snake_case = tables
+            .iter()
+            .any(|table| !table.has_snake_case_table_name())
+            .then(|| quote! { #![allow(non_snake_case)] });
+        let table_names: Vec<String> =
+            tables.iter().map(|table| format!("`{}`", table.table_name())).collect();
+        let (last, others) = table_names.split_last().expect("A crate holds at least one table");
+        let crate_documentation = if others.is_empty() {
+            format!("Auto-generated crate for the {last} table.")
+        } else {
+            format!("Auto-generated crate for the {} and {last} tables.", others.join(", "))
+        };
+        // The tables of a crate refer to each other through the crate name,
+        // as they do to the tables of other crates.
+        let self_alias = (tables.len() > 1).then(|| {
+            let crate_ident = tables[0].crate_ident(workspace);
+            quote! { extern crate self as #crate_ident; }
+        });
+        let mut table_items = Vec::with_capacity(tables.len());
+        for table in tables {
+            table_items.push(self.table_items(table, workspace)?);
+        }
+
+        let content = quote! {
+            #allow_non_snake_case
+            #![doc=#crate_documentation]
+            #self_alias
+            #(#table_items)*
+        };
+
+        write!(buffer, "{content}")?;
+
+        Ok(())
+    }
+
+    /// Returns the items generated for `table`.
+    #[allow(clippy::too_many_lines)]
+    fn table_items(
+        &self,
+        table: &DB::Table,
+        workspace: &Workspace,
+    ) -> Result<TokenStream, crate::Error> {
         let core_derives = table.supported_core_derives(self.database, workspace)?;
         let table_name = table.table_name();
         let camel_case_name = table.table_singular_camel_ident();
         let table_ident = table.table_ident();
-        let crate_documentation = format!("Auto-generated crate for the `{table_name}` table.");
         let struct_documentation = table.table_doc(self.database)?.map_or_else(
             || format!("Struct representing a row in the `{table_name}` table."),
             ToString::to_string,
@@ -90,14 +132,6 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             }
         });
 
-        let allow_non_snake_case = if table.has_snake_case_table_name() {
-            None
-        } else {
-            Some(quote! {
-                #![allow(non_snake_case)]
-            })
-        };
-
         // Each table pair that diesel queries together is declared once, by
         // the crate depending on the other, as `crate_dependencies` assigns.
         let mut allow_tables_to_appear_in_same_query = Vec::new();
@@ -139,10 +173,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             })
         };
 
-        let content = quote! {
-            #allow_non_snake_case
-            #![doc=#crate_documentation]
-
+        Ok(quote! {
             #[derive(#(#core_derives),*)]
             #[derive(::serde::Serialize, ::serde::Deserialize)]
             #[derive(::diesel::Queryable, ::diesel::Selectable, ::diesel::Identifiable, #derive_associations ::diesel_builders::prelude::TableModel)]
@@ -165,10 +196,6 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             #(#ancestral_primary_key_column_getters)*
             #(#extra_implementations)*
             #(#allow_tables_to_appear_in_same_query)*
-        };
-
-        write!(buffer, "{content}")?;
-
-        Ok(())
+        })
     }
 }
