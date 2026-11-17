@@ -183,11 +183,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             if wrote {
                 write!(buffer, ", ")?;
             }
-            write!(
-                buffer,
-                "\"{}\"",
-                user_defined_type.enum_crate_relative_path(workspace).display()
-            )?;
+            let crate_path = user_defined_type.enum_crate_relative_path(workspace);
+            write!(buffer, "\"{}\"", crate_path.display())?;
             wrote = true;
         }
 
