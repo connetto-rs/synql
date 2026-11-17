@@ -35,14 +35,15 @@ pub trait TableSynLike: TableLike
 where
     <Self::DB as DatabaseLike>::Column: ColumnSynLike,
 {
-    /// Returns the name of the crate associated with this table.
+    /// Returns the name of the crate associated with this table, which holds
+    /// the tables grouped with it and is named after one of them.
     ///
     /// # Arguments
     ///
     /// * `workspace` - The workspace where the crate is defined.
     #[must_use]
     fn crate_name(&self, workspace: &Workspace) -> String {
-        format!("{}-{}", workspace.name(), self.table_snake_name())
+        format!("{}-{}", workspace.name(), workspace.crate_table_name(&self.table_snake_name()))
     }
 
     /// Returns the ident of the crate associated with this table.

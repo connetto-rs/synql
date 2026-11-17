@@ -13,6 +13,7 @@ This architectural choice enables:
 - **Granular Dependencies**: Consumers only import the specific table crates they need.
 - **Unified Access**: Optionally generates a 'sink' crate that re-exports all table crates, allowing consumption via a single dependency in projects that need access to the entire schema.
 - **Micro-crate Architecture**: Facilitates maintenance of large schemas by isolating changing components.
+- **Grouped Crates**: Optionally merges densely related tables into shared crates, the communities that the Leiden algorithm finds in the table dependency graph, constrained so that the crates still depend on each other without cycles. The resolution passed to `group_tables` sets their size.
 
 ## Features
 

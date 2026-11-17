@@ -2,7 +2,10 @@
 //! workspace.
 
 mod builder;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 mod core_types;
 
 pub use builder::WorkspaceBuilder;
@@ -25,6 +28,9 @@ pub struct Workspace {
     version: (u8, u8, u8),
     /// Edition of the workspace.
     edition: u16,
+    /// The snake-cased name of the table naming the crate of each table
+    /// grouped with others.
+    crate_tables: HashMap<String, String>,
 }
 
 impl Workspace {
@@ -67,6 +73,15 @@ impl Workspace {
     /// Returns the name of the workspace.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    #[inline]
+    #[must_use]
+    /// Returns the snake-cased name of the table naming the crate which holds
+    /// the table named `table_snake_name`, which is the table itself unless
+    /// it is grouped with others.
+    pub fn crate_table_name<'name>(&'name self, table_snake_name: &'name str) -> &'name str {
+        self.crate_tables.get(table_snake_name).map_or(table_snake_name, String::as_str)
     }
 
     /// Returns the external type ref corresponding to the provided Postgres

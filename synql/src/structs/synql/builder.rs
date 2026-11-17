@@ -25,6 +25,7 @@ pub struct SynQLBuilder<'db, DB: SynQLDatabaseLike> {
     sink_crate_name: Option<String>,
     dag_sink_crate_prefix: Option<String>,
     external_crates: Vec<ExternalCrate>,
+    table_grouping_resolution: Option<f64>,
     /// Additional workspace members.
     members: Vec<TomlDependency>,
     callbacks: Vec<Callback<'db, DB::Table, DB>>,
@@ -50,6 +51,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
             sink_crate_name: None,
             dag_sink_crate_prefix: None,
             external_crates: Vec::new(),
+            table_grouping_resolution: None,
             members: Vec::new(),
             callbacks: Vec::new(),
             toml_callbacks: Vec::new(),
@@ -157,6 +159,24 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
         self
     }
 
+    /// Groups densely related tables into shared crates instead of
+    /// generating a crate for each table.
+    ///
+    /// The groups are the communities that the directed Leiden algorithm,
+    /// [`acyclic_directed_leiden`](geometric_traits::traits::DirectedLeiden::acyclic_directed_leiden)
+    /// from `geometric-traits`, finds in the table dependency graph at the
+    /// given directed modularity `resolution`, so that the crates still
+    /// depend on each other without cycles. A lower resolution yields fewer
+    /// and larger crates, and `1.0` is the standard modularity. Each crate is
+    /// named after the table of its group which most of the other tables of
+    /// the group depend on.
+    #[must_use]
+    #[inline]
+    pub fn group_tables(mut self, resolution: f64) -> Self {
+        self.table_grouping_resolution = Some(resolution);
+        self
+    }
+
     /// Adds a member to the workspace.
     ///
     /// # Arguments
@@ -222,6 +242,7 @@ impl<'db, DB: SynQLDatabaseLike> From<SynQLBuilder<'db, DB>> for SynQL<'db, DB> 
             sink_crate_name: builder.sink_crate_name,
             dag_sink_crate_prefix: builder.dag_sink_crate_prefix,
             external_crates: builder.external_crates,
+            table_grouping_resolution: builder.table_grouping_resolution,
             members: builder.members,
             callbacks: builder.callbacks,
             toml_callbacks: builder.toml_callbacks,

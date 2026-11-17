@@ -63,6 +63,10 @@ pub enum Error {
     #[error("Schema analysis failed: {0}")]
     /// The schema could not be analysed, for instance ordered into a DAG.
     Schema(#[from] sql_traits::errors::Error),
+    #[error("Table grouping failed: {0}")]
+    /// The tables could not be grouped into crates, for instance because the
+    /// modularity resolution is invalid.
+    Grouping(#[from] geometric_traits::traits::ModularityError),
     #[error("Check constraint `{check}` cannot be translated: unsupported {reason}")]
     /// A check constraint uses SQL that has no Rust translation.
     UnsupportedCheckConstraint {
