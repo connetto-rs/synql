@@ -60,8 +60,8 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
     /// Returns the name of the crate holding the Rust enum of this type, made
     /// of the workspace name, the schema and the type name.
     ///
-    /// A table crate name has no hyphen after the workspace name, so the
-    /// hyphen between the schema and the type name keeps the two apart.
+    /// Generation refuses a schema where this name, read as a Rust crate name,
+    /// equals the one of a table crate or of another enum type crate.
     ///
     /// # Example
     ///

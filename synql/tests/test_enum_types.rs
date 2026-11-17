@@ -294,8 +294,25 @@ fn enum_types_sharing_a_crate_name_are_refused() {
     assert!(
         matches!(
             &error,
-            Error::EnumCrateNameClash { first_type, second_type, crate_name }
-                if first_type == "public.Mood" && second_type == "public.mood" && crate_name == "clash-public-mood"
+            Error::CrateNameClash { first, second, crate_ident }
+                if first == "enum type `public.Mood`" && second == "enum type `public.mood`" && crate_ident == "clash_public_mood"
+        ),
+        "Unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn an_enum_type_sharing_the_crate_of_a_table_is_refused() {
+    let (_temp_dir, result) = generate(
+        "clash",
+        "CREATE TYPE mood AS ENUM ('a'); CREATE TABLE public_mood (id INT PRIMARY KEY, x mood);",
+    );
+    let error = result.expect_err("The table crate and the enum crate fold to one Rust crate");
+    assert!(
+        matches!(
+            &error,
+            Error::CrateNameClash { first, second, crate_ident }
+                if first == "table `public_mood`" && second == "enum type `public.mood`" && crate_ident == "clash_public_mood"
         ),
         "Unexpected error: {error:?}"
     );

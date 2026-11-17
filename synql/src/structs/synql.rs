@@ -340,8 +340,18 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             .edition(self.edition)
             .into();
         // The enum types of the schema come last, and none is generated for a
-        // type name a crate of the workspace already maps.
-        let mut enum_external_crates: Vec<(&DB::UserDefinedType, ExternalCrate)> = Vec::new();
+        // type name a crate of the workspace already maps. Each enum crate
+        // must have a Rust crate name no table crate or other enum crate has.
+        let mut crate_owners: Vec<(String, String)> = Vec::new();
+        for table in self.database.tables() {
+            if !self.skip_table(table)? {
+                crate_owners.push((
+                    table.crate_ident(&workspace).to_string(),
+                    format!("table `{}`", table.table_name()),
+                ));
+            }
+        }
+        let mut enum_external_crates: Vec<ExternalCrate> = Vec::new();
         for (user_defined_type, enum_external_crate) in
             self.database
                 .user_defined_types()
@@ -354,19 +364,21 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
                     Some((user_defined_type, user_defined_type.enum_external_crate(&workspace)?))
                 })
         {
-            if let Some((other_type, _)) = enum_external_crates
-                .iter()
-                .find(|(_, other_crate)| other_crate.name() == enum_external_crate.name())
+            let crate_ident = user_defined_type.enum_crate_ident(&workspace).to_string();
+            let owner = format!("enum type `{}`", user_defined_type.qualified_name());
+            if let Some((_, other_owner)) =
+                crate_owners.iter().find(|(other_ident, _)| *other_ident == crate_ident)
             {
-                return Err(crate::Error::EnumCrateNameClash {
-                    first_type: other_type.qualified_name(),
-                    second_type: user_defined_type.qualified_name(),
-                    crate_name: enum_external_crate.name().to_owned(),
+                return Err(crate::Error::CrateNameClash {
+                    first: other_owner.clone(),
+                    second: owner,
+                    crate_ident,
                 });
             }
-            enum_external_crates.push((user_defined_type, enum_external_crate));
+            crate_owners.push((crate_ident, owner));
+            enum_external_crates.push(enum_external_crate);
         }
-        for (_, enum_external_crate) in enum_external_crates {
+        for enum_external_crate in enum_external_crates {
             workspace.add_external_crate(enum_external_crate);
         }
 
