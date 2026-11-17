@@ -15,6 +15,30 @@ pub enum Error {
         /// SQL type of the column.
         sql_type: String,
     },
+    #[error(
+        "Default `{default}` of column `{column_name}` in table `{table_name}` has no Rust translation"
+    )]
+    /// A column default with no Rust translation for the type of the column.
+    UnsupportedDefault {
+        /// Name of the table of the column.
+        table_name: String,
+        /// Name of the column.
+        column_name: String,
+        /// SQL expression of the default.
+        default: String,
+    },
+    #[error("The {first} and the {second} would both generate the Rust crate `{crate_ident}`")]
+    /// Two generated crates whose names fold to the same Rust crate name, as
+    /// the crates of the enum types `"Mood"` and `mood`, or of the enum type
+    /// `mood` and the table `public_mood`.
+    CrateNameClash {
+        /// The table or enum type generated first.
+        first: String,
+        /// The table or enum type generated second.
+        second: String,
+        /// The Rust crate name both crates would have.
+        crate_ident: String,
+    },
     #[error("Function definition not found for function `{function_name}`")]
     /// Function definition not found error.
     FunctionNotFound {

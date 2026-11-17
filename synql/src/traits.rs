@@ -14,3 +14,5 @@ pub mod unique_index;
 pub use unique_index::UniqueIndexSynLike;
 pub mod foreign_key;
 pub use foreign_key::ForeignKeySynLike;
+pub mod user_defined_type;
+pub use user_defined_type::UserDefinedTypeSynLike;

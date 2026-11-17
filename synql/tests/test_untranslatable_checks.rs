@@ -75,7 +75,9 @@ fn columns_without_a_rust_type_are_unsupported() {
 #[test]
 fn a_check_that_is_not_a_predicate_is_unsupported() {
     assert!(matches!(
-        unsupported_reason("CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (a IN (1, 2)));"),
+        unsupported_reason(
+            "CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (a BETWEEN 1 AND 2));"
+        ),
         UnsupportedCheck::Expression(_)
     ));
     assert!(matches!(
@@ -99,6 +101,16 @@ fn numbers_need_a_typed_operand() {
             "CREATE TABLE t (id INT PRIMARY KEY, a INT, b BIGINT, CHECK (a + 1 < b));"
         ),
         UnsupportedCheck::MixedTypes { left, right } if left == "i32" && right == "i64"
+    ));
+}
+
+#[test]
+fn enum_columns_compare_only_with_their_labels() {
+    assert!(matches!(
+        unsupported_reason(
+            "CREATE TYPE mood AS ENUM ('sad'); CREATE TABLE t (id INT PRIMARY KEY, a mood, CHECK (a = 'glad'));"
+        ),
+        UnsupportedCheck::MixedTypes { left, right } if left.ends_with("Mood") && right == "'glad'"
     ));
 }
 

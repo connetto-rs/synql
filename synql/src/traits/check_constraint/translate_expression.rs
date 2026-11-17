@@ -15,7 +15,7 @@ use sql_traits::{
 };
 use sqlparser::ast::{
     BinaryOperator, CastKind, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
-    Ident, Value, ValueWithSpan,
+    Ident, InTarget, Value, ValueWithSpan,
 };
 
 use super::like_pattern::LikePattern;
@@ -509,6 +509,10 @@ where
                 }
             }));
         }
+        let column_type = self.column_type(column)?;
+        if !column_type.is_numeric() {
+            return Ok(None);
+        }
         let (violation, constructor) = match op {
             BinaryOperator::LtEq => (quote! { > }, quote! { smaller_than_value }),
             BinaryOperator::Lt => (quote! { >= }, quote! { strictly_smaller_than_value }),
@@ -516,7 +520,7 @@ where
             BinaryOperator::GtEq => (quote! { < }, quote! { greater_than_value }),
             _ => return Ok(None),
         };
-        let column_value = self.parse_value(value, Some(self.column_type(column)?))?.0;
+        let column_value = self.parse_value(value, Some(column_type))?.0;
         let float_value = self.parse_value(value, Some(self.workspace.f64()))?.0;
         Ok(Some(quote! {
             if #column_ident #violation &#column_value {
@@ -549,7 +553,20 @@ where
                 })?;
                 Ok((tokens, ty))
             }
-            Value::SingleQuotedString(string) => Ok((quote! { #string }, self.workspace.string())),
+            Value::SingleQuotedString(string) => {
+                match type_hint.filter(ExternalTypeRef::is_enum) {
+                    Some(ty) => {
+                        let tokens = ty.cast(string).map_err(|_| {
+                            self.unsupported(UnsupportedCheck::MixedTypes {
+                                left: type_name(ty),
+                                right: value.to_string(),
+                            })
+                        })?;
+                        Ok((tokens, ty))
+                    }
+                    None => Ok((quote! { #string }, self.workspace.string())),
+                }
+            }
             other => Err(self.unsupported(UnsupportedCheck::Expression(other.to_string()))),
         }
     }
@@ -735,12 +752,11 @@ where
             Expr::Identifier(ident) => self.column_operand(self.column(&ident.value)?),
             Expr::Value(ValueWithSpan { value, .. }) => {
                 let (tokens, ty) = self.parse_value(value, type_hint)?;
-                let by_reference = matches!(value, Value::SingleQuotedString(_));
                 Ok(Operand {
                     tokens,
                     binding: Binding::Postfix,
                     nullable: false,
-                    by_reference,
+                    by_reference: ty.is_string(),
                     ty,
                     columns: Vec::new(),
                 })
@@ -792,16 +808,12 @@ where
                 let right = self.operand(right, None)?;
                 self.logical(op, left, right)
             }
+            Expr::In { expr: needle, target: InTarget::List(list), negated, global: false } => {
+                self.in_list(needle, list, *negated)
+            }
             Expr::BinaryOp { left, op, right } => {
                 if let Some(operator) = comparison_operator(op) {
-                    let (left, right) = self.operand_pair(left, right, None)?;
-                    let owned_left = left.ty.is_string() && !left.by_reference;
-                    let owned_right = right.ty.is_string() && !right.by_reference;
-                    return Ok(Self::lift(left, right, self.workspace.bool(), |left, right| {
-                        let left = comparable(left, owned_left);
-                        let right = comparable(right, owned_right);
-                        quote! { #left #operator #right }
-                    }));
+                    return self.comparison(left, &operator, right);
                 }
                 let Some(operator) = arithmetic_operator(op) else {
                     return Err(self.unsupported(UnsupportedCheck::Operator(op.to_string())));
@@ -815,6 +827,51 @@ where
             }
             _ => Err(self.unsupported(UnsupportedCheck::Expression(expr.to_string()))),
         }
+    }
+
+    /// Translates the comparison of two expressions with the Rust comparison
+    /// operator, NULL when either is NULL, comparing a `String` computed by
+    /// a function as `&str`.
+    fn comparison(
+        &self,
+        left: &Expr,
+        operator: &TokenStream,
+        right: &Expr,
+    ) -> Result<Operand<'workspace, 'db, DB>, Error> {
+        let (left, right) = self.operand_pair(left, right, None)?;
+        let owned_left = left.ty.is_string() && !left.by_reference;
+        let owned_right = right.ty.is_string() && !right.by_reference;
+        Ok(Self::lift(left, right, self.workspace.bool(), |left, right| {
+            let left = comparable(left, owned_left);
+            let right = comparable(right, owned_right);
+            quote! { #left #operator #right }
+        }))
+    }
+
+    /// Translates `IN` as the OR of the equalities of the needle with each
+    /// item, and `NOT IN` as the AND of the inequalities, as PostgreSQL
+    /// defines them.
+    fn in_list(
+        &self,
+        needle: &Expr,
+        list: &[Expr],
+        negated: bool,
+    ) -> Result<Operand<'workspace, 'db, DB>, Error> {
+        let (operator, junction) = if negated {
+            (quote! { != }, BinaryOperator::And)
+        } else {
+            (quote! { == }, BinaryOperator::Or)
+        };
+        let mut items = list.iter();
+        let first = items.next().ok_or_else(|| {
+            self.unsupported(UnsupportedCheck::Expression(format!("{needle} IN ()")))
+        })?;
+        let mut translated = self.comparison(needle, &operator, first)?;
+        for item in items {
+            let comparison = self.comparison(needle, &operator, item)?;
+            translated = self.logical(&junction, translated, comparison)?;
+        }
+        Ok(translated)
     }
 
     /// Translates SQL's `now()` compared with a timestamp.

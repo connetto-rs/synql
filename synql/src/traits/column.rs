@@ -32,6 +32,16 @@ fn is_null_literal(expr: &Expr) -> bool {
     }
 }
 
+/// Returns the string a literal spells, through any parentheses and casts
+/// around it, as `'active'::membership_state` spells `active`.
+fn string_literal(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Nested(inner) | Expr::Cast { expr: inner, .. } => string_literal(inner),
+        Expr::Value(ValueWithSpan { value: Value::SingleQuotedString(string), .. }) => Some(string),
+        _ => None,
+    }
+}
+
 /// Trait implemented by types that represent SQL columns and can be used to
 /// generate Rust code for them.
 pub trait ColumnSynLike: ColumnLike {
@@ -359,13 +369,12 @@ pub trait ColumnSynLike: ColumnLike {
         {
             return Ok(quote! {});
         }
-        let Some(default_value) = self
-            .default_expression()
-            .filter(|expression| !is_null_literal(expression))
-            .map(ToString::to_string)
+        let Some(default_expression) =
+            self.default_expression().filter(|expression| !is_null_literal(expression))
         else {
             return Ok(quote! {});
         };
+        let default_value = default_expression.to_string();
         let Some(external_postgres_type) = self.external_postgres_type(workspace, database) else {
             return Err(crate::Error::ColumnTypeNotFound {
                 table_name: self.table(database).table_name().to_string(),
@@ -375,6 +384,17 @@ pub trait ColumnSynLike: ColumnLike {
         };
 
         let casted_default_value = match default_value.as_str() {
+            _ if external_postgres_type.is_enum() => {
+                string_literal(default_expression)
+                    .and_then(|label| external_postgres_type.cast(label).ok())
+                    .ok_or_else(|| {
+                        crate::Error::UnsupportedDefault {
+                            table_name: self.table(database).table_name().to_string(),
+                            column_name: self.column_name().to_string(),
+                            default: default_expression.to_string(),
+                        }
+                    })?
+            }
             candidate if external_postgres_type.is_string() => {
                 let stripped_value =
                     candidate.trim_end_matches("::character varying").trim_matches('\'');
