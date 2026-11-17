@@ -11,7 +11,7 @@ use quote::{ToTokens, format_ident, quote};
 use sql_traits::{
     errors::{LookupError, ObjectKind},
     structs::IdentifierCase,
-    traits::{CheckConstraintLike, ColumnLike, DatabaseLike, TableLike},
+    traits::{CheckConstraintLike, ColumnLike, DataTypeLike, DatabaseLike, TableLike},
 };
 use sqlparser::ast::{
     BinaryOperator, CastKind, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
@@ -478,7 +478,7 @@ where
         let table_ident = self.table()?.table_snake_ident();
         let table_name = self.table_name()?;
         if *op == BinaryOperator::NotEq {
-            if !column.is_textual(self.database)
+            if !column.data_type(self.database).is_textual(self.database)
                 || *value != Value::SingleQuotedString(String::new())
             {
                 return Ok(None);

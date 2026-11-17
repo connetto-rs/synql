@@ -5,7 +5,7 @@
 
 use sql_traits::{
     errors::LookupError,
-    traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike},
+    traits::{ColumnLike, DataTypeLike, DatabaseLike, ForeignKeyLike, TableLike},
 };
 
 /// Trait for tables that contain a single textual primary key field
@@ -76,7 +76,7 @@ pub trait TableListLike: TableLike {
             return Ok(false);
         };
         // We check if that column is the primary key && textual.
-        if !column.is_primary_key(database)? || !column.is_textual(database) {
+        if !column.is_primary_key(database)? || !column.data_type(database).is_textual(database) {
             return Ok(false);
         }
 

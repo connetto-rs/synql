@@ -11,7 +11,7 @@ use synql::prelude::*;
 #[test]
 fn unknown_check_constraint_function_is_a_lookup_error() {
     let db = ParserDB::parse::<PostgreSqlDialect>(
-        "CREATE TABLE notes (id INT PRIMARY KEY, body TEXT CHECK (no_such_function(body)));",
+        "CREATE TABLE notes (id INT PRIMARY KEY, body TEXT CHECK (elsewhere.no_such_function(body)));",
     )
     .expect("the schema parses");
     let temp_dir = tempfile::tempdir().expect("a temporary directory");
@@ -25,7 +25,7 @@ fn unknown_check_constraint_function_is_a_lookup_error() {
             Error::Lookup(LookupError::ObjectNotInDatabase {
                 object_kind: ObjectKind::Function,
                 object,
-            }) if object == "`no_such_function`"
+            }) if object == "`elsewhere.no_such_function`"
         ),
         "unexpected error: {error:?}"
     );
