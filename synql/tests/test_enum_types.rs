@@ -336,6 +336,18 @@ fn a_default_that_is_no_label_is_unsupported() {
 }
 
 #[test]
+fn a_null_default_is_no_default() {
+    let (temp_dir, result) = generate(
+        "nulls",
+        "CREATE TYPE mood AS ENUM ('a'); CREATE TABLE t (id INT PRIMARY KEY, x mood DEFAULT NULL, y mood DEFAULT NULL::mood);",
+    );
+    result.expect("Unable to generate workspace");
+    let lib = std::fs::read_to_string(temp_dir.path().join("nulls-t/src/lib.rs"))
+        .expect("The table crate has a library");
+    assert!(!lib.contains("default ="), "{lib}");
+}
+
+#[test]
 fn a_schema_of_types_alone_generates_the_enum_crates() {
     let (temp_dir, result) =
         generate("alone", "CREATE TYPE pair AS (a INT, b INT); CREATE TYPE mood AS ENUM ('a');");
