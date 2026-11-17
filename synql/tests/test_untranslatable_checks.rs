@@ -6,10 +6,10 @@ use sqlparser::dialect::PostgreSqlDialect;
 use synql::prelude::*;
 
 const FUNCTIONS: &str = "
-CREATE FUNCTION is_lowercase(TEXT) RETURNS BOOLEAN AS 'SELECT $1 = lower($1)' LANGUAGE SQL;
 CREATE FUNCTION not_mapped(TEXT) RETURNS BOOLEAN AS 'SELECT true' LANGUAGE SQL;
-CREATE FUNCTION is_lowercase_shape(SHAPE) RETURNS BOOLEAN AS 'SELECT true' LANGUAGE SQL;
-CREATE FUNCTION is_shorter(TEXT, TEXT) RETURNS BOOLEAN AS 'SELECT true' LANGUAGE SQL;
+CREATE FUNCTION is_lowercase_relation(REGCLASS) RETURNS BOOLEAN AS 'SELECT true' LANGUAGE SQL;
+CREATE FUNCTION is_shorter(shorter TEXT, longer TEXT) RETURNS BOOLEAN AS 'SELECT true' LANGUAGE SQL;
+CREATE FUNCTION has_prefix(TEXT, TEXT DEFAULT '') RETURNS BOOLEAN AS 'SELECT true' LANGUAGE SQL;
 ";
 
 /// Generates a workspace for the table and returns the generation error.
@@ -20,12 +20,12 @@ fn generation_error(table: &str) -> Error {
     let checks = ExternalCrate::new("checks")
         .expect("A valid crate name")
         .functions([
-            ExternalFunction::new("is_lowercase", syn::parse_quote!(::checks::is_lowercase)),
             ExternalFunction::new(
-                "is_lowercase_shape",
-                syn::parse_quote!(::checks::is_lowercase_shape),
+                "is_lowercase_relation",
+                syn::parse_quote!(::checks::is_lowercase_relation),
             ),
             ExternalFunction::new("is_shorter", syn::parse_quote!(::checks::is_shorter)),
+            ExternalFunction::new("has_prefix", syn::parse_quote!(::checks::has_prefix)),
         ])
         .into();
     let synql: SynQL<ParserDB> =
@@ -75,10 +75,6 @@ fn columns_without_a_rust_type_are_unsupported() {
 #[test]
 fn a_check_that_is_not_a_predicate_is_unsupported() {
     assert!(matches!(
-        unsupported_reason("CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (a + 1));"),
-        UnsupportedCheck::Expression(_)
-    ));
-    assert!(matches!(
         unsupported_reason("CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (a IN (1, 2)));"),
         UnsupportedCheck::Expression(_)
     ));
@@ -95,25 +91,19 @@ fn numbers_need_a_typed_operand() {
         UnsupportedCheck::UntypedNumber(number) if number == "1"
     ));
     assert!(matches!(
-        unsupported_reason(
-            "CREATE TABLE t (id INT PRIMARY KEY, flag BOOLEAN NOT NULL, CHECK (flag = 1));"
-        ),
-        UnsupportedCheck::MixedTypes { right, .. } if right == "1"
+        unsupported_reason("CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (a > 1.5));"),
+        UnsupportedCheck::MixedTypes { right, .. } if right == "1.5"
     ));
     assert!(matches!(
         unsupported_reason(
-            "CREATE TABLE t (id INT PRIMARY KEY, a INT, name TEXT, CHECK (a + 1 < name));"
+            "CREATE TABLE t (id INT PRIMARY KEY, a INT, b BIGINT, CHECK (a + 1 < b));"
         ),
-        UnsupportedCheck::MixedTypes { .. }
+        UnsupportedCheck::MixedTypes { left, right } if left == "i32" && right == "i64"
     ));
 }
 
 #[test]
 fn operators_need_operands_of_their_kind() {
-    assert!(matches!(
-        unsupported_reason("CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT, CHECK (a OR b));"),
-        UnsupportedCheck::Operator(operator) if operator == "OR"
-    ));
     assert!(matches!(
         unsupported_reason(
             "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (name || 'x' = 'y'));"
@@ -122,9 +112,9 @@ fn operators_need_operands_of_their_kind() {
     ));
     assert!(matches!(
         unsupported_reason(
-            "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (name + name = 'x'));"
+            "CREATE TABLE t (id INT PRIMARY KEY, start_date DATE, end_date DATE, CHECK (end_date - start_date > 0));"
         ),
-        UnsupportedCheck::Operator(operator) if operator == "+"
+        UnsupportedCheck::Operator(operator) if operator == "-"
     ));
     assert!(matches!(
         unsupported_reason(
@@ -137,17 +127,21 @@ fn operators_need_operands_of_their_kind() {
 #[test]
 fn builtin_functions_need_their_operand_types() {
     assert!(matches!(
-        unsupported_reason("CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (length(a) > 1));"),
-        UnsupportedCheck::FunctionCall(_)
-    ));
-    assert!(matches!(
         unsupported_reason(
-            "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (length(name, name) > 1));"
+            "CREATE TABLE t (id INT PRIMARY KEY, data BYTEA, CHECK (length(data) > 1));"
         ),
         UnsupportedCheck::FunctionCall(_)
     ));
     assert!(matches!(
-        unsupported_reason("CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (now() > a));"),
+        unsupported_reason(
+            "CREATE TABLE t (id INT PRIMARY KEY, data BYTEA, CHECK (length(data, 'UTF8') > 1));"
+        ),
+        UnsupportedCheck::FunctionCall(_)
+    ));
+    assert!(matches!(
+        unsupported_reason(
+            "CREATE TABLE t (id INT PRIMARY KEY, created TIMESTAMP, CHECK (now() > created));"
+        ),
         UnsupportedCheck::FunctionCall(_)
     ));
 }
@@ -156,25 +150,13 @@ fn builtin_functions_need_their_operand_types() {
 fn validation_functions_need_plain_mapped_calls() {
     assert!(matches!(
         unsupported_reason(
-            "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (is_lowercase(DISTINCT name)));"
+            "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (has_prefix(name)));"
         ),
         UnsupportedCheck::FunctionCall(_)
     ));
     assert!(matches!(
         unsupported_reason(
-            "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (is_lowercase(name) OVER ()));"
-        ),
-        UnsupportedCheck::FunctionCall(_)
-    ));
-    assert!(matches!(
-        unsupported_reason(
-            "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (is_lowercase(name, name)));"
-        ),
-        UnsupportedCheck::FunctionCall(_)
-    ));
-    assert!(matches!(
-        unsupported_reason(
-            "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (is_shorter(name, *)));"
+            "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (is_shorter(name, longer => name)));"
         ),
         UnsupportedCheck::FunctionCall(_)
     ));
@@ -192,8 +174,8 @@ fn validation_functions_need_plain_mapped_calls() {
     ));
     assert!(matches!(
         unsupported_reason(
-            "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (is_lowercase_shape(name)));"
+            "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (is_lowercase_relation(name)));"
         ),
-        UnsupportedCheck::FunctionArgumentType { function, index: 0 } if function == "is_lowercase_shape"
+        UnsupportedCheck::FunctionArgumentType { function, index: 0 } if function == "is_lowercase_relation"
     ));
 }

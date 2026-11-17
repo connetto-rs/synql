@@ -96,6 +96,12 @@ CREATE TABLE docs (
     meta JSONB NOT NULL,
     CHECK (body IS NOT NULL OR meta = meta)
 );
+CREATE SCHEMA rules;
+CREATE FUNCTION rules.is_even(INT) RETURNS BOOLEAN AS 'SELECT $1 % 2 = 0' LANGUAGE SQL;
+CREATE TABLE tallies (
+    id INT PRIMARY KEY,
+    tally INT NOT NULL CHECK (rules.is_even(tally))
+);
 ";
 
 const CHECKS_MANIFEST: &str = r#"[package]
@@ -144,6 +150,15 @@ pub fn is_shorter(first: &str, second: &str) -> Result<(), Rejected> {
 pub fn is_positive(value: &i32) -> Result<(), Rejected> {
     if *value > 0 { Ok(()) } else { Err(Rejected("not positive")) }
 }
+
+/// Accepts an even number.
+///
+/// # Errors
+///
+/// Rejects an odd number.
+pub fn is_even(value: &i32) -> Result<(), Rejected> {
+    if *value % 2 == 0 { Ok(()) } else { Err(Rejected("not even")) }
+}
 "#;
 
 const ASSERTIONS_MANIFEST: &str = r#"[package]
@@ -166,6 +181,7 @@ synql-check-translation-switches.workspace = true
 synql-check-translation-memos.workspace = true
 synql-check-translation-deadlines.workspace = true
 synql-check-translation-docs.workspace = true
+synql-check-translation-tallies.workspace = true
 "#;
 
 const ASSERTIONS_TEST: &str = r#"//! Assertions over the generated validation code.
@@ -321,6 +337,14 @@ fn lengths_of_null_text_and_functions_of_numbers() {
     assert!(<Memos as ValidateColumn<memos::priority>>::validate_column(&1).is_ok());
     assert!(is_function_rejection(<Memos as ValidateColumn<memos::priority>>::validate_column(&0)));
 }
+
+#[test]
+fn schema_qualified_calls_reach_their_function() {
+    use synql_check_translation_tallies::tallies;
+    type Tallies = <tallies::table as TableExt>::NewValues;
+    assert!(<Tallies as ValidateColumn<tallies::tally>>::validate_column(&2).is_ok());
+    assert!(is_function_rejection(<Tallies as ValidateColumn<tallies::tally>>::validate_column(&3)));
+}
 "#;
 
 #[test]
@@ -335,6 +359,7 @@ fn test_check_translation() {
             ExternalFunction::new("is_lowercase", syn::parse_quote!(::checks::is_lowercase)),
             ExternalFunction::new("is_shorter", syn::parse_quote!(::checks::is_shorter)),
             ExternalFunction::new("is_positive", syn::parse_quote!(::checks::is_positive)),
+            ExternalFunction::new("is_even", syn::parse_quote!(::checks::is_even)),
         ])
         .into();
     let synql: SynQL<ParserDB> = SynQL::new(&db, &workspace_path)

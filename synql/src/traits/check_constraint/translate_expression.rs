@@ -233,11 +233,12 @@ where
         Ok(names)
     }
 
-    /// Returns the requested function of the check constraint.
-    fn function(&self, name: &str) -> Result<&'db DB::Function, LookupError> {
-        self.check_constraint
-            .function(self.database, name)?
-            .ok_or_else(|| ObjectKind::Function.not_in_database(name))
+    /// Returns the function the call reaches, or `None` for an expression
+    /// PostgreSQL's grammar writes like a call, such as `CURRENT_TIMESTAMP`.
+    ///
+    /// Of several overloads the call may reach, the first is returned.
+    fn function(&self, call: &Function) -> Result<Option<&'db DB::Function>, LookupError> {
+        Ok(self.check_constraint.functions_reached_by(call, self.database)?.next())
     }
 
     /// Returns the requested column of the check constraint.
@@ -844,12 +845,10 @@ where
         }
         let arguments = call_arguments(function);
         let name = name.to_string();
-        let sql_function = self.function(&name)?;
-        let path = sql_function
-            .external_function_ref(self.workspace)
-            .ok_or_else(|| self.unsupported(UnsupportedCheck::UnmappedFunction(name.clone())))?
-            .path()
-            .clone();
+        let unmapped = || self.unsupported(UnsupportedCheck::UnmappedFunction(name.clone()));
+        let sql_function = self.function(function)?.ok_or_else(unmapped)?;
+        let path =
+            sql_function.external_function_ref(self.workspace).ok_or_else(unmapped)?.path().clone();
         let argument_types =
             sql_function.argument_types(self.workspace, self.database).collect::<Vec<_>>();
         if argument_types.len() != arguments.len() {
