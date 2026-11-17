@@ -4,7 +4,10 @@
 
 use std::borrow::Borrow;
 
-use sql_traits::{errors::LookupError, traits::TableLike};
+use sql_traits::{
+    errors::LookupError,
+    traits::{ColumnLike, DatabaseLike, ForeignKeyLike, TableLike},
+};
 
 use crate::traits::{
     HorizontalSameAsForeignKeyLike, TriangularSameAsColumnLike,
@@ -14,6 +17,9 @@ use crate::traits::{
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 /// Informations regarding the triangular same-as relationship.
 pub struct Triangular<'db, FK: HorizontalSameAsForeignKeyLike> {
+    /// Host column referencing the primary key of the table at the right
+    /// angle of the triangle.
+    key_column: &'db <<FK as ForeignKeyLike>::DB as DatabaseLike>::Column,
     /// Horizontal same-as foreign key which forms the base of the triangular
     /// relationship. When the relationship is discretionary, this is `None`.
     horizontal_same_as: Option<&'db FK>,
@@ -22,6 +28,39 @@ pub struct Triangular<'db, FK: HorizontalSameAsForeignKeyLike> {
 }
 
 impl<'db, FK: HorizontalSameAsForeignKeyLike> Triangular<'db, FK> {
+    /// Returns the host column referencing the primary key of the table at
+    /// the right angle of the triangle.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use sql_relations::prelude::*;
+    /// use sqlparser::dialect::GenericDialect;
+    /// let db = ParserDB::parse::<GenericDialect>(
+    ///     "
+    /// CREATE TABLE grandparent (id INT PRIMARY KEY);
+    /// CREATE TABLE parent (id INT PRIMARY KEY REFERENCES grandparent(id));
+    /// CREATE TABLE sibling (id INT PRIMARY KEY, grandparent_id INT REFERENCES grandparent(id), UNIQUE(id, grandparent_id));
+    /// CREATE TABLE child (id INT PRIMARY KEY REFERENCES parent(id), sibling_id INT REFERENCES sibling(id),
+    ///     FOREIGN KEY (sibling_id, id) REFERENCES sibling(id, grandparent_id));
+    /// ",
+    /// )?;
+    /// let child_table =
+    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let triangles = child_table
+    ///     .foreign_keys(&db)?
+    ///     .filter_map(|fk| fk.triangular_same_as(&db).transpose())
+    ///     .collect::<Result<Vec<_>, _>>()?;
+    /// let [triangle] = &triangles[..] else {
+    ///     panic!("Expected exactly one triangular same-as relationship");
+    /// };
+    /// assert_eq!(triangle.key_column().column_name(), "sibling_id");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn key_column(&self) -> &'db <<FK as ForeignKeyLike>::DB as DatabaseLike>::Column {
+        self.key_column
+    }
+
     /// Returns the horizontal same-as foreign key which forms the base of the
     /// triangular relationship, if any.
     ///
@@ -182,13 +221,8 @@ pub trait TriangularSameAsForeignKeyLike: HorizontalSameAsForeignKeyLike {
         &self,
         database: &Self::DB,
     ) -> Result<bool, LookupError> {
-        if !self.is_horizontal_same_as(database)? {
-            return Ok(false);
-        }
-
-        self.host_columns(database)?
-            .next()
-            .map_or(Ok(false), |column| column.has_triangular_same_as_foreign_key(database))
+        self.horizontal_same_as_column_pairs(database)?
+            .map_or(Ok(false), |(key, _)| key.has_triangular_same_as_foreign_key(database))
     }
 
     /// Returns the kind of triangular same-as relationship this foreign key
@@ -326,18 +360,12 @@ pub trait TriangularSameAsForeignKeyLike: HorizontalSameAsForeignKeyLike {
     where
         Self: 'db,
     {
-        // A triangular constraint must reference a primary key and not be
-        // self-referential.
-        if self.is_self_referential(database)? || !self.is_referenced_primary_key(database)? {
+        let Some(key_column) = self.triangular_same_as_key_column(database)? else {
             return Ok(None);
-        }
+        };
 
         let host_table = self.host_table(database);
         let foreign_table = self.referenced_table(database)?;
-
-        if foreign_table.has_composite_primary_key(database)? {
-            return Ok(None);
-        }
 
         if host_table.shares_ancestors_with(database, foreign_table)? {
             return Ok(None);
@@ -352,28 +380,25 @@ pub trait TriangularSameAsForeignKeyLike: HorizontalSameAsForeignKeyLike {
             return Ok(None);
         }
 
-        let candidate_host_columns = self.host_columns(database)?.collect::<Vec<_>>();
-        let candidate_referenced_columns = self.referenced_columns(database)?.collect::<Vec<_>>();
-
-        // A mandatory triangle needs a horizontal same-as covering this key and
-        // a hypothenuse.
+        // A mandatory triangle needs a horizontal same-as from the same key
+        // column to the same table which also covers a hypothenuse.
         for horizontal_same_as in host_table.horizontal_same_as_foreign_keys(database)? {
             let horizontal_same_as: &Self = horizontal_same_as.borrow();
-            let fk_local_columns = horizontal_same_as.host_columns(database)?.collect::<Vec<_>>();
-            if !candidate_host_columns.iter().all(|c| fk_local_columns.contains(c)) {
+            if horizontal_same_as.referenced_table(database)? != foreign_table
+                || horizontal_same_as
+                    .horizontal_same_as_column_pairs(database)?
+                    .is_none_or(|(horizontal_key_column, _)| horizontal_key_column != key_column)
+            {
                 continue;
             }
 
             let fk_referenced_columns =
                 horizontal_same_as.referenced_columns(database)?.collect::<Vec<_>>();
-            if !candidate_referenced_columns.iter().all(|c| fk_referenced_columns.contains(c)) {
-                continue;
-            }
-
             for hypothenuse_same_as in &hypothenuses_same_as {
                 let mut hypothenuse_host_columns = hypothenuse_same_as.host_columns(database)?;
                 if hypothenuse_host_columns.all(|c| fk_referenced_columns.contains(&c)) {
                     return Ok(Some(Triangular {
+                        key_column,
                         horizontal_same_as: Some(horizontal_same_as),
                         hypothenuse_same_as,
                     }));
@@ -382,9 +407,94 @@ pub trait TriangularSameAsForeignKeyLike: HorizontalSameAsForeignKeyLike {
         }
 
         Ok(Some(Triangular {
+            key_column,
             horizontal_same_as: None,
             hypothenuse_same_as: hypothenuses_same_as[0],
         }))
+    }
+
+    /// Returns the host column through which this foreign key references the
+    /// primary key of its table, when this foreign key is the one a
+    /// triangular same-as relationship of that column hangs from.
+    ///
+    /// That is a single-column foreign key to the primary key. When the host
+    /// table declares none for the column, the composite horizontal same-as
+    /// foreign key pairing the column with the primary key implies the
+    /// reference, and the first such key in declaration order is the one.
+    ///
+    /// # Arguments
+    ///
+    /// * `database` - The database containing the tables.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use sql_relations::prelude::*;
+    /// use sqlparser::dialect::GenericDialect;
+    /// let db = ParserDB::parse::<GenericDialect>(
+    ///     "
+    /// CREATE TABLE grandparent (id INT PRIMARY KEY);
+    /// CREATE TABLE parent (id INT PRIMARY KEY REFERENCES grandparent(id));
+    /// CREATE TABLE sibling (id INT PRIMARY KEY, grandparent_id INT REFERENCES grandparent(id), name TEXT,
+    ///     UNIQUE(id, grandparent_id, name));
+    /// CREATE TABLE child (id INT PRIMARY KEY REFERENCES parent(id), sibling_id INT, name TEXT,
+    ///     FOREIGN KEY (sibling_id, id, name) REFERENCES sibling(id, grandparent_id, name));
+    /// ",
+    /// )?;
+    /// let child_table =
+    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
+    /// let [_extension, sibling_fk] = child_table.foreign_keys(&db)?.collect::<Vec<_>>()[..] else {
+    ///     panic!("Expected exactly 2 foreign keys in child table");
+    /// };
+    /// let key_column = sibling_fk.triangular_same_as_key_column(&db)?.unwrap();
+    /// assert_eq!(key_column.column_name(), "sibling_id");
+    /// assert!(sibling_fk.triangular_same_as(&db)?.unwrap().is_mandatory());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the tables, columns or foreign keys
+    /// involved cannot be resolved.
+    fn triangular_same_as_key_column<'db>(
+        &'db self,
+        database: &'db Self::DB,
+    ) -> Result<Option<&'db <Self::DB as DatabaseLike>::Column>, LookupError>
+    where
+        Self: 'db,
+    {
+        if self.is_self_referential(database)? {
+            return Ok(None);
+        }
+        let foreign_table = self.referenced_table(database)?;
+        if foreign_table.has_composite_primary_key(database)? {
+            return Ok(None);
+        }
+        if self.is_referenced_primary_key(database)? {
+            return Ok(self.host_columns(database)?.next());
+        }
+
+        let Some((key_column, _)) = self.horizontal_same_as_column_pairs(database)? else {
+            return Ok(None);
+        };
+        let mut implying_foreign_key = None;
+        for foreign_key in key_column.foreign_keys(database)? {
+            let foreign_key: &Self = foreign_key.borrow();
+            if foreign_key.referenced_table(database)? != foreign_table {
+                continue;
+            }
+            if foreign_key.is_referenced_primary_key(database)? {
+                return Ok(None);
+            }
+            if implying_foreign_key.is_none()
+                && foreign_key
+                    .horizontal_same_as_column_pairs(database)?
+                    .is_some_and(|(other_key_column, _)| other_key_column == key_column)
+            {
+                implying_foreign_key = Some(foreign_key);
+            }
+        }
+        Ok((implying_foreign_key == Some(self)).then_some(key_column))
     }
 }
 

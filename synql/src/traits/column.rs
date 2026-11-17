@@ -3,19 +3,15 @@
 //! representation, building on top of the
 //! [`ColumnLike`] trait.
 
-use std::borrow::Borrow;
-
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use quote::{ToTokens, quote};
 use sql_relations::traits::{
-    HorizontalSameAsColumnLike, TriangularSameAsColumnLike, TriangularSameAsForeignKeyLike,
-    VerticalSameAsColumnLike,
+    HorizontalSameAsColumnLike, HorizontalSameAsForeignKeyLike, TriangularSameAsColumnLike,
+    TriangularSameAsForeignKeyLike, VerticalSameAsColumnLike,
 };
 use sql_traits::{
     errors::LookupError,
-    traits::{
-        CheckConstraintLike, ColumnLike, DataTypeLike, DatabaseLike, ForeignKeyLike, TableLike,
-    },
+    traits::{CheckConstraintLike, ColumnLike, DataTypeLike, ForeignKeyLike, TableLike},
 };
 use syn::Ident;
 
@@ -257,55 +253,38 @@ pub trait ColumnSynLike: ColumnLike {
         workspace: &Workspace,
         database: &Self::DB,
     ) -> Result<Vec<proc_macro2::TokenStream>, LookupError> {
-        let mut horizontal_same_as_decorators = vec![];
+        // Several composite keys sharing a key column mirror the same columns.
+        let mut same_as_columns = Vec::new();
         for same_as in self.horizontal_same_as_foreign_keys(database)? {
-            let host_columns = same_as
-                .host_columns(database)?
-                .map(Borrow::borrow)
-                .collect::<Vec<&<Self::DB as DatabaseLike>::Column>>();
-            let referenced_columns = same_as
-                .referenced_columns(database)?
-                .map(Borrow::borrow)
-                .collect::<Vec<&<Self::DB as DatabaseLike>::Column>>();
-            let satellite_table = same_as.referenced_table(database)?;
-
-            let [key, other] = host_columns.as_slice() else {
-                unimplemented!(
-                    "Only binary foreign keys are supported for horizontal same-as constraints, found a foreign key in table `{}` to table `{}` with `{}` columns: {}",
-                    same_as.host_table(database).table_name(),
-                    satellite_table.table_name(),
-                    host_columns.len(),
-                    host_columns.iter().map(ColumnLike::column_name).collect::<Vec<_>>().join(", ")
-                );
-            };
-            let [_foreign_pk, referenced_column] = referenced_columns.as_slice() else {
-                unreachable!();
-            };
-
             if !same_as.is_horizontal_same_as_of_triangular(database)? {
                 continue;
             }
-
-            if key == &self.borrow() {
-                // The key is handled separately in the discretionary/mandatory
-                // decorators
+            let Some((key, pairs)) = same_as.horizontal_same_as_column_pairs(database)? else {
                 continue;
+            };
+            // The key carries the mandatory or discretionary decorator instead.
+            let Some((_, referenced_column)) =
+                pairs.into_iter().find(|(host_column, _)| host_column == &self.borrow())
+            else {
+                continue;
+            };
+            if !same_as_columns.contains(&(referenced_column, key)) {
+                same_as_columns.push((referenced_column, key));
             }
-            if other != &self.borrow() {
-                unreachable!(
-                    "The column must be either the key or the other column in the foreign key"
-                );
-            }
-            let key_ident = key.column_snake_ident();
-            let satellite_table_ident = satellite_table.table_snake_ident();
-            let satellite_table_crate = satellite_table.crate_ident(workspace);
-            let referenced_column_ident = referenced_column.column_snake_ident();
-
-            horizontal_same_as_decorators.push(quote! {
-                #[same_as(#satellite_table_crate::#satellite_table_ident::#referenced_column_ident, #key_ident)]
-            });
         }
-        Ok(horizontal_same_as_decorators)
+        Ok(same_as_columns
+            .into_iter()
+            .map(|(referenced_column, key)| {
+                let key_ident = key.column_snake_ident();
+                let satellite_table = referenced_column.table(database);
+                let satellite_table_ident = satellite_table.table_snake_ident();
+                let satellite_table_crate = satellite_table.crate_ident(workspace);
+                let referenced_column_ident = referenced_column.column_snake_ident();
+                quote! {
+                    #[same_as(#satellite_table_crate::#satellite_table_ident::#referenced_column_ident, #key_ident)]
+                }
+            })
+            .collect())
     }
 
     /// Generates the triangular same-as decorators for this column.

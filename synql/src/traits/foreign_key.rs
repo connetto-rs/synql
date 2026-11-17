@@ -2,7 +2,10 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use sql_traits::{errors::LookupError, traits::ForeignKeyLike};
+use sql_traits::{
+    errors::LookupError,
+    traits::{ForeignKeyLike, IndexLike},
+};
 
 use crate::{
     structs::Workspace,
@@ -15,10 +18,13 @@ pub trait ForeignKeySynLike: ForeignKeyLike {
     /// the `fk` or the `fpk` macro, depending on whether the foreign key
     /// is a foreign primary key or not.
     ///
+    /// The column pairs follow the order of the referenced unique index, the
+    /// only order `diesel-builders` resolves the index in.
+    ///
     /// # Errors
     ///
-    /// Returns a [`LookupError`] when the referenced table or the columns of
-    /// the foreign key cannot be resolved.
+    /// Returns a [`LookupError`] when the referenced table, its unique indices
+    /// or the columns of the foreign key cannot be resolved.
     fn to_syn(
         &self,
         database: &Self::DB,
@@ -27,15 +33,25 @@ pub trait ForeignKeySynLike: ForeignKeyLike {
         let foreign_table = self.referenced_table(database)?;
         let foreign_table_ident = foreign_table.table_ident();
         let foreign_table_crate_ident = foreign_table.crate_ident(workspace);
-        let host_column_paths = self
+        let mut column_pairs = self
             .host_columns(database)?
-            .map(ColumnSynLike::column_snake_ident)
-            .collect::<Vec<syn::Ident>>();
+            .zip(self.referenced_columns(database)?)
+            .collect::<Vec<_>>();
+        if let Some(unique_index) = self.is_referenced_unique_key(database)? {
+            let index_columns = unique_index.columns(database)?.collect::<Vec<_>>();
+            column_pairs.sort_by_key(|(_, referenced_column)| {
+                index_columns.iter().position(|index_column| index_column == referenced_column)
+            });
+        }
         let is_self_referential = self.is_self_referential(database)?;
-        let foreign_column_paths = self
-            .referenced_columns(database)?
-            .map(|col| {
-                let col_ident = col.column_snake_ident();
+        let host_column_paths = column_pairs
+            .iter()
+            .map(|(host_column, _)| host_column.column_snake_ident())
+            .collect::<Vec<syn::Ident>>();
+        let foreign_column_paths = column_pairs
+            .iter()
+            .map(|(_, referenced_column)| {
+                let col_ident = referenced_column.column_snake_ident();
                 if is_self_referential {
                     syn::parse_quote!(#foreign_table_ident::#col_ident)
                 } else {

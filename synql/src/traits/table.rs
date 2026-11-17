@@ -11,10 +11,7 @@ use inflection_rs::inflection::singularize;
 use quote::quote;
 use sql_relations::{
     prelude::{ForeignKeyLike, UniqueIndexLike},
-    traits::{
-        HorizontalSameAsForeignKeyLike, TableListLike, TriangularSameAsForeignKeyLike,
-        VerticalSameAsForeignKeyLike,
-    },
+    traits::{TableListLike, TriangularSameAsForeignKeyLike, VerticalSameAsForeignKeyLike},
 };
 use sql_traits::{
     errors::LookupError,
@@ -478,10 +475,17 @@ where
     ) -> Result<Vec<proc_macro2::TokenStream>, LookupError> {
         let mut fks = Vec::new();
         for foreign_key in self.foreign_keys(database)? {
-            if foreign_key.is_vertical_same_as(database)?
-                || foreign_key.is_horizontal_same_as(database)?
-                || foreign_key.is_triangular_same_as(database)?
-            {
+            if foreign_key.is_vertical_same_as(database)? {
+                continue;
+            }
+            // The same-as decorators of a triangle form one two-column key per
+            // mirrored column, so only a wider horizontal key is declared, and
+            // it replaces the two-column keys it covers.
+            if foreign_key.is_horizontal_same_as_of_triangular(database)? {
+                if foreign_key.host_columns(database)?.nth(2).is_none() {
+                    continue;
+                }
+            } else if foreign_key.is_triangular_same_as(database)? {
                 continue;
             }
             fks.push(foreign_key.to_syn(database, workspace)?);
