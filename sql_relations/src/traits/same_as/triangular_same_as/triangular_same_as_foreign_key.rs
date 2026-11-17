@@ -51,9 +51,8 @@ impl<'db, FK: HorizontalSameAsForeignKeyLike> Triangular<'db, FK> {
     ///     .foreign_keys(&db)?
     ///     .filter_map(|fk| fk.triangular_same_as(&db).transpose())
     ///     .collect::<Result<Vec<_>, _>>()?;
-    /// let [triangle] = &triangles[..] else {
-    ///     panic!("Expected exactly one triangular same-as relationship");
-    /// };
+    /// assert_eq!(triangles.len(), 1);
+    /// let triangle = &triangles[0];
     /// assert_eq!(triangle.key_column().column_name(), "sibling_id");
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -443,9 +442,9 @@ pub trait TriangularSameAsForeignKeyLike: HorizontalSameAsForeignKeyLike {
     /// )?;
     /// let child_table =
     ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
-    /// let [_extension, sibling_fk] = child_table.foreign_keys(&db)?.collect::<Vec<_>>()[..] else {
-    ///     panic!("Expected exactly 2 foreign keys in child table");
-    /// };
+    /// let foreign_keys = child_table.foreign_keys(&db)?.collect::<Vec<_>>();
+    /// assert_eq!(foreign_keys.len(), 2);
+    /// let sibling_fk = foreign_keys[1];
     /// let key_column = sibling_fk.triangular_same_as_key_column(&db)?.unwrap();
     /// assert_eq!(key_column.column_name(), "sibling_id");
     /// assert!(sibling_fk.triangular_same_as(&db)?.unwrap().is_mandatory());
