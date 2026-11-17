@@ -85,6 +85,7 @@ fn sink_callbacks_extend_only_the_sink_crate() -> Result<(), Box<dyn std::error:
             }))
         })
         .sink_toml_callback(|_db| Ok(Some(TomlDependency::new("procedure-like").version("1.0.0")?)))
+        .sink_toml_callback(|_db| Ok(Some(TomlDependency::new("procedure-like").version("1.0.0")?)))
         .into();
     synql.generate()?;
     drop(synql);
@@ -102,7 +103,7 @@ fn sink_callbacks_extend_only_the_sink_crate() -> Result<(), Box<dyn std::error:
     let sink_lib = std::fs::read_to_string(sink_path.join("src").join("lib.rs"))?;
     assert!(sink_lib.contains("pub fn sink_hook"));
     let sink_toml = std::fs::read_to_string(sink_path.join("Cargo.toml"))?;
-    assert!(sink_toml.contains("procedure-like = { version = \"1.0.0\" }"));
+    assert_eq!(sink_toml.matches("procedure-like = { version = \"1.0.0\" }").count(), 1);
 
     let dag_sink_path = workspace_path.join("dag_comments");
     let dag_sink_lib = std::fs::read_to_string(dag_sink_path.join("src").join("lib.rs"))?;
