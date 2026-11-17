@@ -20,15 +20,11 @@ pub trait TriangularSameAsColumnLike: ColumnLike {
     /// Returns a [`LookupError`] when the foreign keys of the column or the
     /// tables they reference cannot be resolved.
     fn has_triangular_same_as_foreign_key(&self, database: &Self::DB) -> Result<bool, LookupError> {
-        for foreign_key in self.foreign_keys(database)? {
-            if foreign_key.is_triangular_same_as(database)? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(self.triangular_same_as_foreign_keys(database)?.next().is_some())
     }
 
-    /// Returns the triangular same-as foreign keys defined on the column.
+    /// Returns the foreign keys of triangular same-as relationships whose key
+    /// is this column.
     ///
     /// # Errors
     ///
@@ -39,9 +35,12 @@ pub trait TriangularSameAsColumnLike: ColumnLike {
         database: &'db Self::DB,
     ) -> Result<impl Iterator<Item = &'db <Self::DB as DatabaseLike>::ForeignKey>, LookupError>
     {
+        let column: &<Self::DB as DatabaseLike>::Column = self.borrow();
         let mut foreign_keys = Vec::new();
         for foreign_key in self.foreign_keys(database)? {
-            if foreign_key.is_triangular_same_as(database)? {
+            if foreign_key.triangular_same_as_key_column(database)? == Some(column)
+                && foreign_key.is_triangular_same_as(database)?
+            {
                 foreign_keys.push(foreign_key);
             }
         }

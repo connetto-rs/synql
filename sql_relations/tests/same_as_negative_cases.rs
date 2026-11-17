@@ -37,22 +37,29 @@ fn plain_keys_are_neither_vertical_nor_horizontal_same_as() {
     assert!(!extension.is_vertical_same_as(&db).unwrap());
     assert_eq!(extension.vertical_same_as_column_pair(&db).unwrap(), None);
     assert!(!brother_fk.is_horizontal_same_as(&db).unwrap());
-    assert_eq!(brother_fk.horizontal_same_as_column_pair(&db).unwrap(), None);
+    assert_eq!(brother_fk.horizontal_same_as_column_pairs(&db).unwrap(), None);
     assert!(!brother_fk.is_horizontal_same_as_of_triangular(&db).unwrap());
 }
 
 #[test]
-fn a_horizontal_same_as_over_two_columns_has_no_column_pair() {
+fn a_horizontal_same_as_to_a_composite_primary_key_has_no_key_column() {
     let db = ParserDB::parse::<GenericDialect>(
         "
     CREATE TABLE parent (id INT PRIMARY KEY);
-    CREATE TABLE brother (id INT PRIMARY KEY, name TEXT, code TEXT, UNIQUE(id, name, code));
+    CREATE TABLE brother (
+        first_id INT,
+        second_id INT,
+        name TEXT,
+        PRIMARY KEY (first_id, second_id),
+        UNIQUE (first_id, second_id, name)
+    );
     CREATE TABLE child (
         id INT PRIMARY KEY REFERENCES parent(id),
-        brother_id INT,
+        brother_first_id INT,
+        brother_second_id INT,
         name TEXT,
-        code TEXT,
-        FOREIGN KEY (brother_id, name, code) REFERENCES brother(id, name, code)
+        FOREIGN KEY (brother_first_id, brother_second_id, name)
+            REFERENCES brother(first_id, second_id, name)
     );
     ",
     )
@@ -62,5 +69,6 @@ fn a_horizontal_same_as_over_two_columns_has_no_column_pair() {
     };
 
     assert!(brother_fk.is_horizontal_same_as(&db).unwrap());
-    assert_eq!(brother_fk.horizontal_same_as_column_pair(&db).unwrap(), None);
+    assert_eq!(brother_fk.horizontal_same_as_column_pairs(&db).unwrap(), None);
+    assert!(!brother_fk.is_horizontal_same_as_of_triangular(&db).unwrap());
 }
