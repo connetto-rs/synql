@@ -13,7 +13,9 @@ use sql_relations::traits::{
 };
 use sql_traits::{
     errors::LookupError,
-    traits::{CheckConstraintLike, ColumnLike, DatabaseLike, ForeignKeyLike, TableLike},
+    traits::{
+        CheckConstraintLike, ColumnLike, DataTypeLike, DatabaseLike, ForeignKeyLike, TableLike,
+    },
 };
 use syn::Ident;
 
@@ -186,7 +188,7 @@ pub trait ColumnSynLike: ColumnLike {
         workspace: &'workspace Workspace,
         database: &Self::DB,
     ) -> Option<ExternalTypeRef<'workspace>> {
-        workspace.external_postgres_type(&self.normalized_data_type(database))
+        workspace.external_postgres_type(&self.data_type(database).normalized_name(database))
     }
 
     /// Returns whether the column type supports the `Copy` trait in Rust.
@@ -367,14 +369,14 @@ pub trait ColumnSynLike: ColumnLike {
         {
             return Ok(quote! {});
         }
-        let Some(default_value) = self.default_value() else {
+        let Some(default_value) = self.default_expression().map(ToString::to_string) else {
             return Ok(quote! {});
         };
         let Some(external_postgres_type) = self.external_postgres_type(workspace, database) else {
             return Err(crate::Error::ColumnTypeNotFound {
                 table_name: self.table(database).table_name().to_string(),
                 column_name: self.column_name().to_string(),
-                sql_type: self.data_type(database).to_string(),
+                sql_type: self.data_type(database).name(database).into_owned(),
             });
         };
 
@@ -411,7 +413,7 @@ pub trait ColumnSynLike: ColumnLike {
                         default_value,
                         self.column_name(),
                         self.table(database).table_name(),
-                        self.data_type(database),
+                        self.data_type(database).name(database),
                         external_postgres_type.rust_type().to_token_stream().to_string(),
                         external_postgres_type.crate_name(),
                     );
@@ -483,7 +485,7 @@ pub trait ColumnSynLike: ColumnLike {
                 crate::Error::ColumnTypeNotFound {
                     table_name: self.table(database).table_name().to_string(),
                     column_name: self.column_name().to_string(),
-                    sql_type: self.data_type(database).to_string(),
+                    sql_type: self.data_type(database).name(database).into_owned(),
                 }
             })?;
         let rust_type = external_postgres_type.rust_type();
@@ -542,7 +544,7 @@ pub trait ColumnSynLike: ColumnLike {
                 crate::Error::ColumnTypeNotFound {
                     table_name: table.table_name().to_string(),
                     column_name: self.column_name().to_string(),
-                    sql_type: self.data_type(database).to_string(),
+                    sql_type: self.data_type(database).name(database).into_owned(),
                 }
             })?;
         let documentation = self.column_doc(database)?.map_or_else(
