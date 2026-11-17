@@ -32,12 +32,11 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             .then(|| quote! { #![allow(non_snake_case)] });
         let table_names: Vec<String> =
             tables.iter().map(|table| format!("`{}`", table.table_name())).collect();
-        let crate_documentation = match table_names.split_last() {
-            Some((last, [])) => format!("Auto-generated crate for the {last} table."),
-            Some((last, others)) => {
-                format!("Auto-generated crate for the {} and {last} tables.", others.join(", "))
-            }
-            None => unreachable!("A crate holds at least one table"),
+        let (last, others) = table_names.split_last().expect("A crate holds at least one table");
+        let crate_documentation = if others.is_empty() {
+            format!("Auto-generated crate for the {last} table.")
+        } else {
+            format!("Auto-generated crate for the {} and {last} tables.", others.join(", "))
         };
         // The tables of a crate refer to each other through the crate name,
         // as they do to the tables of other crates.
