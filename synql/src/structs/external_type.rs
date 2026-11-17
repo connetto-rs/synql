@@ -9,6 +9,8 @@ pub use builder::ExternalTypeBuilder;
 use quote::{ToTokens, quote};
 pub use traits_mask::Trait;
 
+use crate::structs::EnumVariant;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 /// Struct defining the type required by some type found in the postgres
 /// database schema.
@@ -21,7 +23,10 @@ pub struct ExternalType {
     rust_type: syn::Type,
     /// The postgres types which are compatible with the diesel and rust types
     /// defined within the crate.
-    postgres_types: Vec<&'static str>,
+    postgres_types: Vec<String>,
+    /// The variants of a Rust enum standing for a PostgreSQL enum type, each
+    /// with the label PostgreSQL spells it with, `None` for every other type.
+    variants: Option<Vec<EnumVariant>>,
     /// The traits supported by the current type.
     traits: traits_mask::TraitsMask,
 }
@@ -50,8 +55,23 @@ impl ExternalType {
     /// Returns a reference over the postgres types which are compatible with
     /// the diesel and rust types defined within the crate.
     #[must_use]
-    pub fn postgres_types(&self) -> &[&'static str] {
+    pub fn postgres_types(&self) -> &[String] {
         &self.postgres_types
+    }
+
+    /// Returns the variants of the Rust enum standing for a PostgreSQL enum
+    /// type, in the order PostgreSQL sorts their labels, or an empty slice
+    /// for every other type.
+    #[must_use]
+    pub fn variants(&self) -> &[EnumVariant] {
+        self.variants.as_deref().unwrap_or_default()
+    }
+
+    /// Returns whether the type is a Rust enum standing for a PostgreSQL enum
+    /// type.
+    #[must_use]
+    pub fn is_enum(&self) -> bool {
+        self.variants.is_some()
     }
 
     /// Returns whether the type is a `Unit` type.
@@ -81,7 +101,8 @@ impl ExternalType {
         self.postgres_types.iter().any(|t| t.eq_ignore_ascii_case(postgres_type))
     }
 
-    /// Casts a value to the external type.
+    /// Casts a value to the external type, the label of a PostgreSQL enum
+    /// type to its variant.
     pub(crate) fn cast(&self, value: &str) -> Result<proc_macro2::TokenStream, syn::Error> {
         let string_rust_type = self.rust_type.to_token_stream().to_string();
 
@@ -92,6 +113,17 @@ impl ExternalType {
                 format!("Cannot cast value to external type: {self:?}"),
             )
         };
+
+        if self.is_enum() {
+            let variant = self
+                .variants()
+                .iter()
+                .find(|variant| variant.label() == value)
+                .ok_or_else(mk_err)?;
+            let rust_type = &self.rust_type;
+            let ident = variant.ident();
+            return Ok(quote! { #rust_type::#ident });
+        }
 
         Ok(match string_rust_type.as_str() {
             "String" | "str" => {

@@ -15,6 +15,18 @@ pub enum Error {
         /// SQL type of the column.
         sql_type: String,
     },
+    #[error(
+        "Default `{default}` of column `{column_name}` in table `{table_name}` has no Rust translation"
+    )]
+    /// A column default with no Rust translation for the type of the column.
+    UnsupportedDefault {
+        /// Name of the table of the column.
+        table_name: String,
+        /// Name of the column.
+        column_name: String,
+        /// SQL expression of the default.
+        default: String,
+    },
     #[error("Function definition not found for function `{function_name}`")]
     /// Function definition not found error.
     FunctionNotFound {

@@ -1,7 +1,7 @@
 //! Submodule providing a builder for the `ExternalType` struct.
 
 use crate::structs::{
-    ExternalType,
+    EnumVariant, ExternalType,
     external_type::{Trait, traits_mask::TraitsMask},
 };
 
@@ -15,7 +15,9 @@ pub struct ExternalTypeBuilder {
     rust_type: syn::Type,
     /// The postgres types which are compatible with the diesel and rust types
     /// defined within the crate.
-    postgres_types: Vec<&'static str>,
+    postgres_types: Vec<String>,
+    /// The variants of a Rust enum standing for a PostgreSQL enum type.
+    variants: Option<Vec<EnumVariant>>,
     /// Trait mask representing the traits supported by the current type.
     traits: TraitsMask,
 }
@@ -24,7 +26,13 @@ impl ExternalTypeBuilder {
     /// Creates a new `ExternalTypeBuilder`.
     #[must_use]
     pub fn new(diesel_type: syn::Type, rust_type: syn::Type) -> Self {
-        Self { diesel_type, rust_type, postgres_types: Vec::new(), traits: TraitsMask::default() }
+        Self {
+            diesel_type,
+            rust_type,
+            postgres_types: Vec::new(),
+            variants: None,
+            traits: TraitsMask::default(),
+        }
     }
 }
 
@@ -51,8 +59,9 @@ impl ExternalTypeBuilder {
     /// Returns an error if the postgres type is already present.
     pub fn postgres_type(
         mut self,
-        postgres_type: &'static str,
+        postgres_type: impl Into<String>,
     ) -> Result<Self, ExternalTypeBuilderError> {
+        let postgres_type = postgres_type.into();
         if self.postgres_types.contains(&postgres_type) {
             return Err(ExternalTypeBuilderError::DuplicatedPostgresType);
         }
@@ -61,6 +70,18 @@ impl ExternalTypeBuilder {
         }
         self.postgres_types.push(postgres_type);
         Ok(self)
+    }
+
+    /// Makes the type a Rust enum standing for a PostgreSQL enum type, with
+    /// the variants in the order PostgreSQL sorts their labels.
+    ///
+    /// # Arguments
+    /// * `variants` - The variants, each with the label PostgreSQL spells it
+    ///   with.
+    #[must_use]
+    pub fn variants(mut self, variants: impl IntoIterator<Item = EnumVariant>) -> Self {
+        self.variants = Some(variants.into_iter().collect());
+        self
     }
 
     /// Sets that the current type supports copy.
@@ -144,7 +165,8 @@ impl ExternalTypeBuilder {
     /// Returns an error if any of the postgres types is already present.
     pub fn postgres_types<I>(mut self, postgres_types: I) -> Result<Self, ExternalTypeBuilderError>
     where
-        I: IntoIterator<Item = &'static str>,
+        I: IntoIterator,
+        I::Item: Into<String>,
     {
         for postgres_type in postgres_types {
             self = self.postgres_type(postgres_type)?;
@@ -159,6 +181,7 @@ impl From<ExternalTypeBuilder> for ExternalType {
             diesel_type: builder.diesel_type,
             rust_type: builder.rust_type,
             postgres_types: builder.postgres_types,
+            variants: builder.variants,
             traits: builder.traits,
         }
     }

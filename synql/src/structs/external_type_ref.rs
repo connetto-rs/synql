@@ -116,6 +116,13 @@ impl<'workspace> ExternalTypeRef<'workspace> {
         self.crate_name() == "rosetta-uuid"
     }
 
+    /// Returns whether the type is a Rust enum standing for a PostgreSQL enum
+    /// type.
+    #[must_use]
+    pub fn is_enum(&self) -> bool {
+        self.type_ref.is_enum()
+    }
+
     /// Casts a value to the external type.
     pub(crate) fn cast(&self, value: &str) -> Result<proc_macro2::TokenStream, syn::Error> {
         self.type_ref.cast(value)

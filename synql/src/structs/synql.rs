@@ -8,6 +8,7 @@ use proc_macro2::TokenStream;
 mod builder;
 mod write_crate_lib;
 mod write_crate_toml;
+mod write_enum_crate;
 mod write_sink_crate_lib;
 mod write_sink_crate_toml;
 pub use builder::SynQLBuilder;
@@ -16,7 +17,7 @@ use time_requirements::{prelude::TimeTracker, task::Task};
 
 use crate::{
     structs::{ExternalCrate, TomlDependency, Workspace, external_crate::MaximalNumberOfColumns},
-    traits::{SynQLDatabaseLike, table::TableSynLike},
+    traits::{SynQLDatabaseLike, UserDefinedTypeSynLike, table::TableSynLike},
 };
 
 /// Type alias for the callback function used to generate additional code for
@@ -178,6 +179,15 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             wrote = true;
         }
 
+        let enum_crates = self.enum_crates(workspace);
+        for types in &enum_crates {
+            if wrote {
+                write!(buffer, ", ")?;
+            }
+            write!(buffer, "\"{}\"", types[0].enum_crate_relative_path(workspace).display())?;
+            wrote = true;
+        }
+
         if let Some(sink_crate_name) = &self.sink_crate_name {
             if wrote {
                 write!(buffer, ", ")?;
@@ -225,6 +235,9 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
                 continue;
             }
             writeln!(buffer, "{}", table.crate_dependency(workspace))?;
+        }
+        for types in &enum_crates {
+            writeln!(buffer, "{}", types[0].enum_crate_dependency(workspace))?;
         }
 
         // Write external dependencies
@@ -303,7 +316,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         let maximum_number_of_columns_in_hierarchy: MaximalNumberOfColumns =
             maximum_number_of_columns_in_hierarchy.try_into()?;
 
-        let workspace: Workspace = Workspace::new()
+        let mut workspace: Workspace = Workspace::new()
             .path(self.path.to_path_buf())
             .crate_base_path(self.crate_base_path.to_path_buf())
             .name(self.name.as_deref().unwrap_or_else(|| self.database.catalog_name()))
@@ -323,6 +336,21 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             .version(self.version.0, self.version.1, self.version.2)
             .edition(self.edition)
             .into();
+        // The enum types of the schema come last, and none is generated for a
+        // type name a crate of the workspace already maps.
+        let enum_external_crates: Vec<ExternalCrate> =
+            self.database
+                .user_defined_types()
+                .filter(|user_defined_type| {
+                    user_defined_type.enum_postgres_types().iter().all(|postgres_type| {
+                        workspace.external_postgres_type(postgres_type).is_none()
+                    })
+                })
+                .filter_map(|user_defined_type| user_defined_type.enum_external_crate(&workspace))
+                .collect();
+        for enum_external_crate in enum_external_crates {
+            workspace.add_external_crate(enum_external_crate);
+        }
 
         if self.clear_existing {
             // Clear up any directory or file that may already exist at the
@@ -343,6 +371,12 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         }
 
         let mut time_tracker = TimeTracker::new("SQL Workspace Generation");
+
+        for types in self.enum_crates(&workspace) {
+            let writing_enum_crate = Task::new("writing_enum_crate");
+            Self::write_enum_crate(&types, &workspace)?;
+            time_tracker.add_or_extend_completed_task(writing_enum_crate);
+        }
 
         for table in self.database.table_dag()? {
             if self.skip_table(table)? {

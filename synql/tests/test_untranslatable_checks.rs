@@ -75,7 +75,9 @@ fn columns_without_a_rust_type_are_unsupported() {
 #[test]
 fn a_check_that_is_not_a_predicate_is_unsupported() {
     assert!(matches!(
-        unsupported_reason("CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (a IN (1, 2)));"),
+        unsupported_reason(
+            "CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (a BETWEEN 1 AND 2));"
+        ),
         UnsupportedCheck::Expression(_)
     ));
     assert!(matches!(

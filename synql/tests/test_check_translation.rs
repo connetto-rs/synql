@@ -131,6 +131,14 @@ CREATE TABLE digests (
     CHECK (octet_length(digest) = 4 OR trusted),
     CHECK (octet_length(note) <= 4 OR trusted)
 );
+CREATE TABLE tiers (
+    id INT PRIMARY KEY,
+    tier INT CHECK (tier IN (1, 2)),
+    kind TEXT NOT NULL CHECK (kind NOT IN ('x', 'y')),
+    cap INT,
+    CHECK (tier IN (1, cap)),
+    CHECK (upper(kind) IN ('Z', 'W', kind))
+);
 ";
 
 const CHECKS_MANIFEST: &str = r#"[package]
@@ -214,6 +222,7 @@ synql-check-translation-tallies.workspace = true
 synql-check-translation-contacts.workspace = true
 synql-check-translation-patterns.workspace = true
 synql-check-translation-digests.workspace = true
+synql-check-translation-tiers.workspace = true
 "#;
 
 const ASSERTIONS_TEST: &str = r#"//! Assertions over the generated validation code.
@@ -281,6 +290,36 @@ fn or_follows_three_valued_logic() {
     assert!(validate(5, Some(1), None).is_ok());
     assert!(validate(5, Some(1), Some("override")).is_ok());
     assert!(is_check_violation(validate(5, Some(1), Some("locked"))));
+}
+
+#[test]
+fn in_lists_match_any_item_and_not_in_lists_none() {
+    use synql_check_translation_tiers::tiers;
+    type Tiers = <tiers::table as TableExt>::NewValues;
+    assert!(<Tiers as ValidateColumn<tiers::tier>>::validate_column(&2).is_ok());
+    assert!(is_check_violation(<Tiers as ValidateColumn<tiers::tier>>::validate_column(&3)));
+    assert!(<Tiers as ValidateColumn<tiers::kind>>::validate_column(&"z".to_owned()).is_ok());
+    assert!(is_check_violation(<Tiers as ValidateColumn<tiers::kind>>::validate_column(
+        &"y".to_owned()
+    )));
+    assert!(<Tiers as ValidateColumn<tiers::kind>>::validate_column(&"w".to_owned()).is_ok());
+    assert!(<Tiers as ValidateColumn<tiers::kind>>::validate_column(&"Q".to_owned()).is_ok());
+    assert!(is_check_violation(<Tiers as ValidateColumn<tiers::kind>>::validate_column(
+        &"q".to_owned()
+    )));
+
+    let validate = |tier: Option<i32>, cap: Option<i32>| {
+        let mut values = tiers::table::empty_new_values();
+        SetColumn::<tiers::tier>::set_column(&mut values, tier);
+        SetColumn::<tiers::kind>::set_column(&mut values, "z".to_owned());
+        SetColumn::<tiers::cap>::set_column(&mut values, cap);
+        ValidateRecord::<tiers::table>::validate_record(&values)
+    };
+    assert!(validate(None, Some(2)).is_ok());
+    assert!(validate(Some(1), Some(2)).is_ok());
+    assert!(validate(Some(2), Some(2)).is_ok());
+    assert!(validate(Some(2), None).is_ok());
+    assert!(is_check_violation(validate(Some(2), Some(3))));
 }
 
 #[test]
