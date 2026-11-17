@@ -25,7 +25,7 @@ impl ExternalCrate {
         ExternalCrate::new("diesel-builders")
             .unwrap()
             .features(number_of_columns.as_diesel_builders_feature())
-            .git("https://github.com/connetto-rs/diesel-builders", "main")
+            .version("0.1.1")
             .unwrap()
             .into()
     }

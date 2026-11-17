@@ -7,10 +7,6 @@ impl ExternalCrate {
     /// `validation_errors` crate.
     #[must_use]
     pub fn validation_errors() -> ExternalCrate {
-        ExternalCrate::new("validation-errors")
-            .unwrap()
-            .git("https://github.com/connetto-rs/diesel-builders", "main")
-            .unwrap()
-            .into()
+        ExternalCrate::new("validation-errors").unwrap().version("0.1.1").unwrap().into()
     }
 }
