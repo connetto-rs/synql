@@ -4,7 +4,7 @@ use std::path::Path;
 
 use proc_macro2::TokenStream;
 
-use super::{Callback, SynQL, TomlCallback};
+use super::{Callback, SinkCallback, SinkTomlCallback, SynQL, TomlCallback};
 use crate::{
     structs::{ExternalCrate, TomlDependency, Workspace},
     traits::SynQLDatabaseLike,
@@ -30,6 +30,8 @@ pub struct SynQLBuilder<'db, DB: SynQLDatabaseLike> {
     members: Vec<TomlDependency>,
     callbacks: Vec<Callback<'db, DB::Table, DB>>,
     toml_callbacks: Vec<TomlCallback<'db, DB::Table, DB>>,
+    sink_callbacks: Vec<SinkCallback<'db, DB::Table, DB>>,
+    sink_toml_callbacks: Vec<SinkTomlCallback<'db, DB>>,
 }
 
 impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
@@ -55,6 +57,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
             members: Vec::new(),
             callbacks: Vec::new(),
             toml_callbacks: Vec::new(),
+            sink_callbacks: Vec::new(),
+            sink_toml_callbacks: Vec::new(),
         }
     }
 
@@ -224,6 +228,36 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
         self.toml_callbacks.push(Box::new(callback));
         self
     }
+
+    /// Registers a callback to generate code for the sink crate, appended
+    /// after its re-exports.
+    ///
+    /// The callback runs once per generation, and only when a sink crate is
+    /// set with [`sink_crate`](Self::sink_crate). It receives the tables
+    /// whose crates the sink crate re-exports, which are the tables neither
+    /// denied nor depending on a denied table.
+    #[must_use]
+    pub fn sink_callback<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(&[&DB::Table], &DB, &Workspace) -> Result<Option<TokenStream>, crate::Error> + 'db,
+    {
+        self.sink_callbacks.push(Box::new(callback));
+        self
+    }
+
+    /// Registers a callback to generate an additional dependency for the
+    /// sink crate.
+    ///
+    /// The callback runs once per generation, and only when a sink crate is
+    /// set with [`sink_crate`](Self::sink_crate).
+    #[must_use]
+    pub fn sink_toml_callback<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(&DB) -> Result<Option<TomlDependency>, crate::Error> + 'db,
+    {
+        self.sink_toml_callbacks.push(Box::new(callback));
+        self
+    }
 }
 
 impl<'db, DB: SynQLDatabaseLike> From<SynQLBuilder<'db, DB>> for SynQL<'db, DB> {
@@ -246,6 +280,8 @@ impl<'db, DB: SynQLDatabaseLike> From<SynQLBuilder<'db, DB>> for SynQL<'db, DB> 
             members: builder.members,
             callbacks: builder.callbacks,
             toml_callbacks: builder.toml_callbacks,
+            sink_callbacks: builder.sink_callbacks,
+            sink_toml_callbacks: builder.sink_toml_callbacks,
         }
     }
 }

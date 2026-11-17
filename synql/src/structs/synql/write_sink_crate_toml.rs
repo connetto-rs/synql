@@ -3,21 +3,20 @@
 use std::{collections::HashSet, io::Write, path::Path};
 
 use crate::{
-    structs::{SynQL, Workspace},
+    structs::{SynQL, TomlDependency, Workspace},
     traits::{SynQLDatabaseLike, table::TableSynLike},
 };
 
 impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
-    pub(super) fn write_sink_crate_toml<'a>(
-        &self,
+    /// Writes the `Cargo.toml` of a sink crate depending on the crates of
+    /// `tables` and on `dependencies`.
+    pub(super) fn write_sink_crate_toml(
         workspace: &Workspace,
         sink_crate_name: &str,
         sink_crate_path: &Path,
-        tables: impl Iterator<Item = &'a DB::Table>,
-    ) -> Result<(), crate::Error>
-    where
-        DB::Table: 'a,
-    {
+        tables: &[&DB::Table],
+        dependencies: &[TomlDependency],
+    ) -> Result<(), crate::Error> {
         let cargo_toml_path = sink_crate_path.join("Cargo.toml");
         let mut buffer = std::fs::File::create(cargo_toml_path)?;
         let (major, minor, patch) = workspace.version();
@@ -36,13 +35,16 @@ edition.workspace = true
 
         let mut written = HashSet::new();
         for table in tables {
-            if self.skip_table(table)? {
-                continue;
-            }
             let crate_name = table.crate_name(workspace);
             if !written.contains(&crate_name) {
                 writeln!(buffer, "{crate_name}.workspace = true")?;
                 written.insert(crate_name);
+            }
+        }
+
+        for dependency in dependencies {
+            if written.insert(dependency.name().to_owned()) {
+                writeln!(buffer, "{dependency}")?;
             }
         }
 
