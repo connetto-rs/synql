@@ -27,6 +27,18 @@ pub enum Error {
         /// SQL expression of the default.
         default: String,
     },
+    #[error(
+        "The PostgreSQL enum types `{first_type}` and `{second_type}` would share the crate `{crate_name}`"
+    )]
+    /// Two PostgreSQL enum types whose names fold to the same crate name.
+    EnumCrateNameClash {
+        /// Schema-qualified name of the first type.
+        first_type: String,
+        /// Schema-qualified name of the second type.
+        second_type: String,
+        /// Name of the crate both types would be generated into.
+        crate_name: String,
+    },
     #[error("Function definition not found for function `{function_name}`")]
     /// Function definition not found error.
     FunctionNotFound {

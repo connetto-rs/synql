@@ -123,9 +123,7 @@ impl Workspace {
     /// Adds an external crate to the workspace, after the crates already in
     /// it, which keep precedence over it for the postgres types both map.
     pub(crate) fn add_external_crate(&mut self, external_crate: ExternalCrate) {
-        if !self.external_crates.contains(&external_crate) {
-            self.external_crates.push(external_crate);
-        }
+        self.external_crates.push(external_crate);
     }
 
     /// Writes the formatting rules for the workspace.

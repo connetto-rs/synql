@@ -272,3 +272,59 @@ fn a_crate_mapping_the_type_keeps_precedence() {
         .expect("The table crate has a library");
     assert!(people_lib.contains(":: moods :: Mood"), "{people_lib}");
 }
+
+/// Generates the workspace of the schema and returns the generation result.
+fn generate(name: &str, schema: &str) -> (tempfile::TempDir, Result<(), Error>) {
+    let db = ParserDB::parse::<PostgreSqlDialect>(schema).expect("Unable to parse the schema");
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let synql: SynQL<ParserDB> =
+        SynQL::new(&db, temp_dir.path()).name(name).generate_workspace_toml().into();
+    let result = synql.generate().map(|_| ());
+    drop(synql);
+    (temp_dir, result)
+}
+
+#[test]
+fn enum_types_sharing_a_crate_name_are_refused() {
+    let (_temp_dir, result) = generate(
+        "clash",
+        "CREATE TYPE \"Mood\" AS ENUM ('a'); CREATE TYPE mood AS ENUM ('b'); CREATE TABLE t (id INT PRIMARY KEY, x mood);",
+    );
+    let error = result.expect_err("Both types fold to one crate name");
+    assert!(
+        matches!(
+            &error,
+            Error::EnumCrateNameClash { first_type, second_type, crate_name }
+                if first_type == "public.Mood" && second_type == "public.mood" && crate_name == "clash-public-mood"
+        ),
+        "Unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn a_default_that_is_no_label_is_unsupported() {
+    let (_temp_dir, result) = generate(
+        "defaults",
+        "CREATE TYPE mood AS ENUM ('a'); CREATE FUNCTION first_mood() RETURNS mood AS 'SELECT ''a''::mood' LANGUAGE SQL; CREATE TABLE t (id INT PRIMARY KEY, x mood DEFAULT first_mood());",
+    );
+    let error = result.expect_err("A call is no label");
+    assert!(
+        matches!(
+            &error,
+            Error::UnsupportedDefault { table_name, column_name, default }
+                if table_name == "t" && column_name == "x" && default == "first_mood()"
+        ),
+        "Unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn a_schema_of_types_alone_generates_the_enum_crates() {
+    let (temp_dir, result) =
+        generate("alone", "CREATE TYPE pair AS (a INT, b INT); CREATE TYPE mood AS ENUM ('a');");
+    result.expect("Unable to generate workspace");
+    let manifest = std::fs::read_to_string(temp_dir.path().join("Cargo.toml"))
+        .expect("The workspace has a manifest");
+    assert!(manifest.contains("members = [\"./alone-public-mood\"]"), "{manifest}");
+    assert!(!temp_dir.path().join("alone-public-pair").exists());
+}

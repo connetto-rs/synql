@@ -232,7 +232,7 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
     /// is not an enum type.
     ///
     /// The tokens reach the diesel SQL type through the `sql_types` module at
-    /// the root of the crate, so several enums can share one crate.
+    /// the root of the crate.
     #[must_use]
     fn enum_tokens(&self) -> Option<TokenStream> {
         let variants = self.enum_variants()?;

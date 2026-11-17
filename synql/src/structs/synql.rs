@@ -179,12 +179,15 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             wrote = true;
         }
 
-        let enum_crates = self.enum_crates(workspace);
-        for types in &enum_crates {
+        for user_defined_type in self.enum_types(workspace) {
             if wrote {
                 write!(buffer, ", ")?;
             }
-            write!(buffer, "\"{}\"", types[0].enum_crate_relative_path(workspace).display())?;
+            write!(
+                buffer,
+                "\"{}\"",
+                user_defined_type.enum_crate_relative_path(workspace).display()
+            )?;
             wrote = true;
         }
 
@@ -236,8 +239,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             }
             writeln!(buffer, "{}", table.crate_dependency(workspace))?;
         }
-        for types in &enum_crates {
-            writeln!(buffer, "{}", types[0].enum_crate_dependency(workspace))?;
+        for user_defined_type in self.enum_types(workspace) {
+            writeln!(buffer, "{}", user_defined_type.enum_crate_dependency(workspace))?;
         }
 
         // Write external dependencies
@@ -338,7 +341,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             .into();
         // The enum types of the schema come last, and none is generated for a
         // type name a crate of the workspace already maps.
-        let enum_external_crates: Vec<ExternalCrate> =
+        let mut enum_external_crates: Vec<(&DB::UserDefinedType, ExternalCrate)> = Vec::new();
+        for (user_defined_type, enum_external_crate) in
             self.database
                 .user_defined_types()
                 .filter(|user_defined_type| {
@@ -346,9 +350,23 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
                         workspace.external_postgres_type(postgres_type).is_none()
                     })
                 })
-                .filter_map(|user_defined_type| user_defined_type.enum_external_crate(&workspace))
-                .collect();
-        for enum_external_crate in enum_external_crates {
+                .filter_map(|user_defined_type| {
+                    Some((user_defined_type, user_defined_type.enum_external_crate(&workspace)?))
+                })
+        {
+            if let Some((other_type, _)) = enum_external_crates
+                .iter()
+                .find(|(_, other_crate)| other_crate.name() == enum_external_crate.name())
+            {
+                return Err(crate::Error::EnumCrateNameClash {
+                    first_type: other_type.qualified_name(),
+                    second_type: user_defined_type.qualified_name(),
+                    crate_name: enum_external_crate.name().to_owned(),
+                });
+            }
+            enum_external_crates.push((user_defined_type, enum_external_crate));
+        }
+        for (_, enum_external_crate) in enum_external_crates {
             workspace.add_external_crate(enum_external_crate);
         }
 
@@ -372,9 +390,9 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
         let mut time_tracker = TimeTracker::new("SQL Workspace Generation");
 
-        for types in self.enum_crates(&workspace) {
+        for user_defined_type in self.enum_types(&workspace) {
             let writing_enum_crate = Task::new("writing_enum_crate");
-            Self::write_enum_crate(&types, &workspace)?;
+            Self::write_enum_crate(user_defined_type, &workspace)?;
             time_tracker.add_or_extend_completed_task(writing_enum_crate);
         }
 

@@ -105,6 +105,16 @@ fn numbers_need_a_typed_operand() {
 }
 
 #[test]
+fn enum_columns_compare_only_with_their_labels() {
+    assert!(matches!(
+        unsupported_reason(
+            "CREATE TYPE mood AS ENUM ('sad'); CREATE TABLE t (id INT PRIMARY KEY, a mood, CHECK (a = 'glad'));"
+        ),
+        UnsupportedCheck::MixedTypes { left, right } if left.ends_with("Mood") && right == "'glad'"
+    ));
+}
+
+#[test]
 fn operators_need_operands_of_their_kind() {
     assert!(matches!(
         unsupported_reason(
