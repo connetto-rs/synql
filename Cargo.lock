@@ -336,8 +336,9 @@ dependencies = [
 
 [[package]]
 name = "geometric-traits"
-version = "0.2.3"
-source = "git+https://github.com/earth-metabolome-initiative/geometric-traits?branch=main#5770e86940de710378a02348b758d5c1b30ad1be"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f03f88beed0b99cac4fa916335285dcdf03011f18dedcf9c0e4f9bd69f560e0f"
 dependencies = [
  "barnes-hut-tree",
  "hashbrown",
@@ -1075,7 +1076,7 @@ checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
 [[package]]
 name = "sql-traits"
 version = "0.1.0"
-source = "git+https://github.com/connetto-rs/sql-traits?branch=main#eed2951aa17a8dd66c5759000ffd4c76d2be9393"
+source = "git+https://github.com/connetto-rs/sql-traits?branch=main#1849bab68120b8e2e077d65d3a42a79cebd974e4"
 dependencies = [
  "geometric-traits",
  "git2",

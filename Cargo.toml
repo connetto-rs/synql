@@ -4,7 +4,7 @@ members = ["synql", "sql_relations"]
 
 [workspace.dependencies]
 sql-traits = {git = "https://github.com/connetto-rs/sql-traits", branch = "main" }
-geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", branch = "main", default-features = false, features = ["alloc"] }
+geometric-traits = { version = "0.2.4", default-features = false, features = ["alloc"] }
 sql_relations = { path = "sql_relations" }
 syn = { version = "2.0", features = ["full", "visit-mut", "extra-traits"] }
 chrono = { version = "0.4.39", features = ["serde"] }
