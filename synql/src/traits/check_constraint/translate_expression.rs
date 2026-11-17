@@ -18,6 +18,7 @@ use sqlparser::ast::{
     Ident, Value, ValueWithSpan,
 };
 
+use super::like_pattern::LikePattern;
 use crate::{
     Error,
     structs::{ExternalTypeRef, UnsupportedCheck, Workspace},
@@ -127,9 +128,24 @@ fn strip_nesting(expr: &Expr) -> &Expr {
     }
 }
 
+/// Returns whether the call is to the named SQL function.
+fn is_call_to(function: &Function, name: &str) -> bool {
+    function.name.to_string().eq_ignore_ascii_case(name)
+}
+
 /// Returns whether the expression is a call to SQL's `now`.
 fn is_now(expr: &Expr) -> bool {
-    matches!(strip_nesting(expr), Expr::Function(function) if function.name.to_string().eq_ignore_ascii_case("now"))
+    matches!(strip_nesting(expr), Expr::Function(function) if is_call_to(function, "now"))
+}
+
+/// Returns the operand of a comparison, borrowing an owned `String` as a
+/// `&str`, since Rust orders a `String` only against another `String`.
+fn comparable(tokens: &TokenStream, owned_string: bool) -> TokenStream {
+    if owned_string {
+        quote! { #tokens.as_str() }
+    } else {
+        tokens.clone()
+    }
 }
 
 /// Returns whether the expression takes its type from the other operand, as
@@ -731,10 +747,43 @@ where
             }
             Expr::IsNull(inner) => self.null_test(inner, true),
             Expr::IsNotNull(inner) => self.null_test(inner, false),
-            Expr::Function(function)
-                if function.name.to_string().eq_ignore_ascii_case("length") =>
-            {
-                self.length_operand(function)
+            Expr::Like { negated, any: false, expr: text, pattern, escape_char: None } => {
+                self.like_operand(text, pattern, *negated, false)
+            }
+            Expr::ILike { negated, any: false, expr: text, pattern, escape_char: None } => {
+                self.like_operand(text, pattern, *negated, true)
+            }
+            Expr::Function(function) if is_call_to(function, "length") => {
+                self.unary_builtin_operand(
+                    function,
+                    ExternalTypeRef::is_string,
+                    self.workspace.usize(),
+                    |text| quote! { #text.chars().count() },
+                )
+            }
+            Expr::Function(function) if is_call_to(function, "octet_length") => {
+                self.unary_builtin_operand(
+                    function,
+                    |ty| ty.is_string() || ty.is_byte_vector(),
+                    self.workspace.usize(),
+                    |value| quote! { #value.len() },
+                )
+            }
+            Expr::Function(function) if is_call_to(function, "lower") => {
+                self.unary_builtin_operand(
+                    function,
+                    ExternalTypeRef::is_string,
+                    self.workspace.string(),
+                    |text| quote! { #text.to_lowercase() },
+                )
+            }
+            Expr::Function(function) if is_call_to(function, "upper") => {
+                self.unary_builtin_operand(
+                    function,
+                    ExternalTypeRef::is_string,
+                    self.workspace.string(),
+                    |text| quote! { #text.to_uppercase() },
+                )
             }
             Expr::Function(function) if is_now(expr) => self.now_operand(function, type_hint),
             Expr::Function(function) => self.function_operand(function),
@@ -746,7 +795,11 @@ where
             Expr::BinaryOp { left, op, right } => {
                 if let Some(operator) = comparison_operator(op) {
                     let (left, right) = self.operand_pair(left, right, None)?;
+                    let owned_left = left.ty.is_string() && !left.by_reference;
+                    let owned_right = right.ty.is_string() && !right.by_reference;
                     return Ok(Self::lift(left, right, self.workspace.bool(), |left, right| {
+                        let left = comparable(left, owned_left);
+                        let right = comparable(right, owned_right);
                         quote! { #left #operator #right }
                     }));
                 }
@@ -786,29 +839,88 @@ where
         })
     }
 
-    /// Translates SQL's `length` of a text, which counts its characters.
-    fn length_operand(&self, function: &Function) -> Result<Operand<'workspace, 'db, DB>, Error> {
+    /// Translates `LIKE` against a literal pattern, or `ILIKE` when
+    /// `case_insensitive`, NULL when the text is NULL.
+    fn like_operand(
+        &self,
+        text: &Expr,
+        pattern: &Expr,
+        negated: bool,
+        case_insensitive: bool,
+    ) -> Result<Operand<'workspace, 'db, DB>, Error> {
+        let text = self.operand(text, Some(self.workspace.string()))?;
+        if !text.ty.is_string() {
+            let operator = if case_insensitive { "ILIKE" } else { "LIKE" };
+            return Err(self.unsupported(UnsupportedCheck::Operator(operator.to_owned())));
+        }
+        let unsupported_pattern =
+            || self.unsupported(UnsupportedCheck::Expression(pattern.to_string()));
+        let Expr::Value(ValueWithSpan { value: Value::SingleQuotedString(literal), .. }) =
+            strip_nesting(pattern)
+        else {
+            return Err(unsupported_pattern());
+        };
+        let like = LikePattern::parse(literal, case_insensitive).ok_or_else(unsupported_pattern)?;
+        let characters = if case_insensitive {
+            quote! { text.chars().flat_map(char::to_lowercase) }
+        } else {
+            quote! { text.chars() }
+        };
+        let matcher = like.matcher(&characters);
+        let matcher = if negated {
+            quote! { !(#matcher) }
+        } else {
+            matcher
+        };
+        let receiver = text.receiver();
+        let (tokens, binding) = if text.nullable {
+            (quote! { #receiver.map(|text| #matcher) }, Binding::Postfix)
+        } else {
+            (quote! {{ let text = #receiver; #matcher }}, Binding::Loose)
+        };
+        Ok(Operand {
+            tokens,
+            binding,
+            nullable: text.nullable,
+            by_reference: false,
+            ty: self.workspace.bool(),
+            columns: text.columns,
+        })
+    }
+
+    /// Translates a call to a built-in function of one argument that
+    /// `accepts` the argument's type, applying `apply` to the argument's
+    /// value, NULL when the argument is NULL.
+    fn unary_builtin_operand(
+        &self,
+        function: &Function,
+        accepts: impl Fn(&ExternalTypeRef<'workspace>) -> bool,
+        ty: ExternalTypeRef<'workspace>,
+        apply: impl Fn(&TokenStream) -> TokenStream,
+    ) -> Result<Operand<'workspace, 'db, DB>, Error> {
+        let unsupported = || self.unsupported(UnsupportedCheck::FunctionCall(function.to_string()));
         let [FunctionArg::Unnamed(FunctionArgExpr::Expr(argument))] = call_arguments(function)
         else {
-            return Err(self.unsupported(UnsupportedCheck::FunctionCall(function.to_string())));
+            return Err(unsupported());
         };
-        let text = self.operand(argument, Some(self.workspace.string()))?;
-        if !text.ty.is_string() {
-            return Err(self.unsupported(UnsupportedCheck::FunctionCall(function.to_string())));
+        let argument = self.operand(argument, Some(self.workspace.string()))?;
+        if !accepts(&argument.ty) {
+            return Err(unsupported());
         }
-        let tokens = text.receiver();
-        let tokens = if text.nullable {
-            quote! { #tokens.map(|text| text.chars().count()) }
+        let receiver = argument.receiver();
+        let tokens = if argument.nullable {
+            let applied = apply(&quote! { value });
+            quote! { #receiver.map(|value| #applied) }
         } else {
-            quote! { #tokens.chars().count() }
+            apply(&receiver)
         };
         Ok(Operand {
             tokens,
             binding: Binding::Postfix,
-            nullable: text.nullable,
+            nullable: argument.nullable,
             by_reference: false,
-            ty: self.workspace.usize(),
-            columns: text.columns,
+            ty,
+            columns: argument.columns,
         })
     }
 
