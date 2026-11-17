@@ -139,6 +139,35 @@ CREATE TABLE tiers (
     CHECK (tier IN (1, cap)),
     CHECK (upper(kind) IN ('Z', 'W', kind))
 );
+CREATE TABLE stamps (
+    id INT PRIMARY KEY,
+    verbose TIMESTAMPTZ NOT NULL CHECK (verbose <= now() + INTERVAL '5 minutes'),
+    glued TIMESTAMPTZ NOT NULL CHECK (glued <= now() + interval '5min'),
+    shouted TIMESTAMPTZ NOT NULL CHECK (shouted <= NOW() + INTERVAL '+5 MINUTES'),
+    seconds TIMESTAMPTZ NOT NULL CHECK (seconds <= now() + INTERVAL '@ 300 secs'),
+    clock TIMESTAMPTZ NOT NULL CHECK (clock <= now() + '00:05:00'::interval),
+    short_clock TIMESTAMPTZ NOT NULL CHECK (short_clock <= (now() + '0:05'::INTERVAL)),
+    mixed TIMESTAMPTZ NOT NULL CHECK (mixed <= now() + INTERVAL '1 hour -55 m'),
+    ago TIMESTAMPTZ NOT NULL CHECK (ago <= now() + INTERVAL '-5 minutes ago'),
+    millis TIMESTAMPTZ NOT NULL CHECK (millis <= now() + INTERVAL '300000 ms'),
+    micros TIMESTAMPTZ NOT NULL CHECK (micros <= now() + INTERVAL '300000000 usec'),
+    fraction TIMESTAMPTZ NOT NULL CHECK (fraction <= now() + '00:04:59.999999'::interval)
+);
+CREATE TABLE leases (
+    id INT PRIMARY KEY,
+    ended TIMESTAMPTZ CHECK (ended > now() - '01:30:00'::interval),
+    renewed TIMESTAMPTZ CHECK (INTERVAL '@ 2 hours 30 secs ago' + now() < renewed),
+    reminded TIMESTAMPTZ CHECK (now() + INTERVAL '-1 hour +90 minutes 250 milliseconds' >= reminded),
+    rewound TIMESTAMPTZ CHECK (rewound >= now() - INTERVAL '-00:10:00'),
+    started TIMESTAMPTZ NOT NULL,
+    CHECK (started <= now() + INTERVAL '5 minutes' OR ended IS NOT NULL)
+);
+CREATE TABLE blinks (
+    id INT PRIMARY KEY,
+    clock TIMESTAMPTZ NOT NULL CHECK (clock <= now() + '00:00:01.75'::interval),
+    millis TIMESTAMPTZ NOT NULL CHECK (millis <= now() + INTERVAL '1750 ms'),
+    micros TIMESTAMPTZ NOT NULL CHECK (micros <= now() + INTERVAL '1 s 750000 us')
+);
 ";
 
 const CHECKS_MANIFEST: &str = r#"[package]
@@ -223,6 +252,10 @@ synql-check-translation-contacts.workspace = true
 synql-check-translation-patterns.workspace = true
 synql-check-translation-digests.workspace = true
 synql-check-translation-tiers.workspace = true
+synql-check-translation-stamps.workspace = true
+synql-check-translation-leases.workspace = true
+synql-check-translation-blinks.workspace = true
+rosetta-utc.workspace = true
 "#;
 
 const ASSERTIONS_TEST: &str = r#"//! Assertions over the generated validation code.
@@ -527,6 +560,80 @@ fn octet_length_counts_bytes() {
     assert!(validate(None, Some("éé"), false).is_ok());
     assert!(is_check_violation(validate(None, Some("ééé"), false)));
     assert!(validate(None, Some("abcde"), true).is_ok());
+}
+
+/// Returns the current time shifted by the milliseconds.
+fn shifted_millis(milliseconds: i64) -> rosetta_utc::TimestampUTC {
+    let now = *rosetta_utc::TimestampUTC::now();
+    let offset = core::time::Duration::from_millis(milliseconds.unsigned_abs());
+    rosetta_utc::TimestampUTC::from(if milliseconds < 0 { now - offset } else { now + offset })
+}
+
+/// Returns the current time shifted by the seconds.
+fn shifted(seconds: i64) -> rosetta_utc::TimestampUTC {
+    shifted_millis(seconds * 1_000)
+}
+
+#[test]
+fn now_shifts_by_every_spelling_of_five_minutes() {
+    use synql_check_translation_stamps::stamps;
+    type Stamps = <stamps::table as TableExt>::NewValues;
+    macro_rules! assert_five_minutes {
+        ($($column:ident),*) => {$(
+            assert!(<Stamps as ValidateColumn<stamps::$column>>::validate_column(&shifted(-86_400)).is_ok());
+            assert!(<Stamps as ValidateColumn<stamps::$column>>::validate_column(&shifted(240)).is_ok());
+            assert!(
+                is_check_violation(<Stamps as ValidateColumn<stamps::$column>>::validate_column(&shifted(360))),
+                stringify!($column)
+            );
+        )*};
+    }
+    assert_five_minutes!(
+        verbose, glued, shouted, seconds, clock, short_clock, mixed, ago, millis, micros, fraction
+    );
+}
+
+#[test]
+fn now_shifts_keep_fractions_of_a_second() {
+    use synql_check_translation_blinks::blinks;
+    type Blinks = <blinks::table as TableExt>::NewValues;
+    macro_rules! assert_one_and_three_quarter_seconds {
+        ($($column:ident),*) => {$(
+            assert!(
+                <Blinks as ValidateColumn<blinks::$column>>::validate_column(&shifted_millis(1_500)).is_ok(),
+                stringify!($column)
+            );
+            assert!(
+                is_check_violation(<Blinks as ValidateColumn<blinks::$column>>::validate_column(&shifted_millis(2_000))),
+                stringify!($column)
+            );
+        )*};
+    }
+    assert_one_and_three_quarter_seconds!(clock, millis, micros);
+}
+
+#[test]
+fn now_shifts_subtract_commute_and_follow_three_valued_logic() {
+    use synql_check_translation_leases::leases;
+    type Leases = <leases::table as TableExt>::NewValues;
+    assert!(<Leases as ValidateColumn<leases::ended>>::validate_column(&shifted(-5_340)).is_ok());
+    assert!(is_check_violation(<Leases as ValidateColumn<leases::ended>>::validate_column(&shifted(-5_460))));
+    assert!(<Leases as ValidateColumn<leases::renewed>>::validate_column(&shifted(-7_200)).is_ok());
+    assert!(is_check_violation(<Leases as ValidateColumn<leases::renewed>>::validate_column(&shifted(-7_290))));
+    assert!(<Leases as ValidateColumn<leases::reminded>>::validate_column(&shifted(1_740)).is_ok());
+    assert!(is_check_violation(<Leases as ValidateColumn<leases::reminded>>::validate_column(&shifted(1_860))));
+    assert!(<Leases as ValidateColumn<leases::rewound>>::validate_column(&shifted(660)).is_ok());
+    assert!(is_check_violation(<Leases as ValidateColumn<leases::rewound>>::validate_column(&shifted(540))));
+
+    let validate = |started: i64, ended: Option<i64>| {
+        let mut values = leases::table::empty_new_values();
+        SetColumn::<leases::started>::set_column(&mut values, shifted(started));
+        SetColumn::<leases::ended>::set_column(&mut values, ended.map(shifted));
+        ValidateRecord::<leases::table>::validate_record(&values)
+    };
+    assert!(validate(240, None).is_ok());
+    assert!(validate(360, Some(0)).is_ok());
+    assert!(is_check_violation(validate(360, None)));
 }
 "#;
 

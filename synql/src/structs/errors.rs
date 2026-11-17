@@ -118,4 +118,8 @@ pub enum UnsupportedCheck {
     /// arguments.
     #[error("function call `{0}`")]
     FunctionCall(String),
+    /// An interval whose length depends on the calendar or the time zone, or
+    /// whose spelling the translator does not read as PostgreSQL does.
+    #[error("interval `{0}`")]
+    Interval(String),
 }

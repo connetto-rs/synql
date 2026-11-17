@@ -7,6 +7,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use sql_traits::traits::{CheckConstraintLike, DatabaseLike};
 
+mod interval;
 mod like_pattern;
 mod sub_expressions;
 mod translate_expression;

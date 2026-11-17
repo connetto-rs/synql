@@ -14,11 +14,11 @@ use sql_traits::{
     traits::{CheckConstraintLike, ColumnLike, DataTypeLike, DatabaseLike, TableLike},
 };
 use sqlparser::ast::{
-    BinaryOperator, CastKind, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
-    Ident, InTarget, Value, ValueWithSpan,
+    BinaryOperator, CastKind, DataType, Expr, Function, FunctionArg, FunctionArgExpr,
+    FunctionArguments, Ident, InTarget, Interval, Value, ValueWithSpan,
 };
 
-use super::like_pattern::LikePattern;
+use super::{interval::fixed_microseconds, like_pattern::LikePattern};
 use crate::{
     Error,
     structs::{ExternalTypeRef, UnsupportedCheck, Workspace},
@@ -138,6 +138,76 @@ fn is_now(expr: &Expr) -> bool {
     matches!(strip_nesting(expr), Expr::Function(function) if is_call_to(function, "now"))
 }
 
+/// Returns whether the expression is an interval, written `INTERVAL '…'` or
+/// cast to `interval`.
+fn is_interval(expr: &Expr) -> bool {
+    matches!(
+        strip_nesting(expr),
+        Expr::Interval(_) | Expr::Cast { data_type: DataType::Interval { .. }, .. }
+    )
+}
+
+/// Returns the text of an interval written `INTERVAL '…'` or `'…'::interval`,
+/// without fields or precision.
+fn interval_text(expr: &Expr) -> Option<&str> {
+    let text = match strip_nesting(expr) {
+        Expr::Interval(Interval {
+            value,
+            leading_field: None,
+            leading_precision: None,
+            last_field: None,
+            fractional_seconds_precision: None,
+        }) => value,
+        Expr::Cast {
+            kind: CastKind::DoubleColon,
+            expr: text,
+            data_type: DataType::Interval { fields: None, precision: None },
+            format: None,
+            ..
+        } => text,
+        _ => return None,
+    };
+    match text.as_ref() {
+        Expr::Value(ValueWithSpan { value: Value::SingleQuotedString(text), .. }) => Some(text),
+        _ => None,
+    }
+}
+
+/// Splits `now() + interval`, `interval + now()` and `now() - interval` into
+/// the call to `now`, the interval and whether the interval is subtracted.
+fn now_shift(expr: &Expr) -> Option<(&Function, &Expr, bool)> {
+    let Expr::BinaryOp { left, op, right } = strip_nesting(expr) else {
+        return None;
+    };
+    let (now, interval, subtracted) = match op {
+        BinaryOperator::Plus if is_interval(right) => (left, right, false),
+        BinaryOperator::Plus if is_interval(left) => (right, left, false),
+        BinaryOperator::Minus if is_interval(right) => (left, right, true),
+        _ => return None,
+    };
+    match strip_nesting(now) {
+        Expr::Function(function) if is_call_to(function, "now") => {
+            Some((function, interval, subtracted))
+        }
+        _ => None,
+    }
+}
+
+/// Returns a `core::time::Duration` of the microseconds, built from the
+/// largest unit that holds them exactly.
+fn duration(microseconds: u64) -> TokenStream {
+    let (constructor, amount) = if microseconds.is_multiple_of(1_000_000) {
+        ("from_secs", microseconds / 1_000_000)
+    } else if microseconds.is_multiple_of(1_000) {
+        ("from_millis", microseconds / 1_000)
+    } else {
+        ("from_micros", microseconds)
+    };
+    let constructor = format_ident!("{constructor}");
+    let amount = proc_macro2::Literal::u64_unsuffixed(amount);
+    quote! { ::core::time::Duration::#constructor(#amount) }
+}
+
 /// Returns the operand of a comparison, borrowing an owned `String` as a
 /// `&str`, since Rust orders a `String` only against another `String`.
 fn comparable(tokens: &TokenStream, owned_string: bool) -> TokenStream {
@@ -149,9 +219,9 @@ fn comparable(tokens: &TokenStream, owned_string: bool) -> TokenStream {
 }
 
 /// Returns whether the expression takes its type from the other operand, as
-/// a literal or `now()` does.
+/// a literal or `now()`, shifted by an interval or not, does.
 fn takes_type_hint(expr: &Expr) -> bool {
-    matches!(strip_nesting(expr), Expr::Value(_)) || is_now(expr)
+    matches!(strip_nesting(expr), Expr::Value(_)) || is_now(expr) || now_shift(expr).is_some()
 }
 
 /// Returns the operator with its operands swapped, for the comparison
@@ -815,6 +885,9 @@ where
                 if let Some(operator) = comparison_operator(op) {
                     return self.comparison(left, &operator, right);
                 }
+                if let Some((now, interval, subtracted)) = now_shift(expr) {
+                    return self.shifted_now_operand(now, interval, subtracted, type_hint);
+                }
                 let Some(operator) = arithmetic_operator(op) else {
                     return Err(self.unsupported(UnsupportedCheck::Operator(op.to_string())));
                 };
@@ -893,6 +966,34 @@ where
             by_reference: false,
             ty,
             columns: Vec::new(),
+        })
+    }
+
+    /// Translates SQL's `now()` shifted by an interval of fixed length and
+    /// compared with a timestamp.
+    fn shifted_now_operand(
+        &self,
+        now: &Function,
+        interval: &Expr,
+        subtracted: bool,
+        type_hint: Option<ExternalTypeRef<'workspace>>,
+    ) -> Result<Operand<'workspace, 'db, DB>, Error> {
+        let now = self.now_operand(now, type_hint)?;
+        let microseconds = interval_text(interval)
+            .and_then(fixed_microseconds)
+            .ok_or_else(|| self.unsupported(UnsupportedCheck::Interval(interval.to_string())))?;
+        let operator = if subtracted == (microseconds < 0) {
+            quote! { + }
+        } else {
+            quote! { - }
+        };
+        let duration = duration(microseconds.unsigned_abs());
+        let now_tokens = &now.tokens;
+        Ok(Operand {
+            tokens: quote! {
+                ::rosetta_utc::TimestampUTC::from(*#now_tokens #operator #duration)
+            },
+            ..now
         })
     }
 

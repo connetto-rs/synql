@@ -217,3 +217,34 @@ fn validation_functions_need_plain_mapped_calls() {
         UnsupportedCheck::FunctionArgumentType { function, index: 0 } if function == "is_lowercase_relation"
     ));
 }
+
+#[test]
+fn now_shifts_need_intervals_of_fixed_length() {
+    let reason = |interval: &str| {
+        unsupported_reason(&format!(
+            "CREATE TABLE t (id INT PRIMARY KEY, at TIMESTAMPTZ, CHECK (at <= now() + {interval}));"
+        ))
+    };
+    assert!(matches!(
+        reason("INTERVAL '1 day'"),
+        UnsupportedCheck::Interval(interval) if interval == "INTERVAL '1 day'"
+    ));
+    for interval in [
+        "INTERVAL '1 week'",
+        "INTERVAL '1 mon'",
+        "INTERVAL '1 year 5 minutes'",
+        "'1 day 00:05:00'::interval",
+        "INTERVAL '5' MINUTE",
+        "INTERVAL '1 minute 5 minutes'",
+        "INTERVAL '2 hours 00:30'",
+        "INTERVAL '5 minutes ago ago'",
+        "INTERVAL 'ago'",
+        "INTERVAL '00:60'",
+        "INTERVAL '00:05:00.1234567'",
+        "INTERVAL '1000000000 hours'",
+        "INTERVAL '-1 hour 30 minutes'",
+        "INTERVAL '-5min 3 s'",
+    ] {
+        assert!(matches!(reason(interval), UnsupportedCheck::Interval(_)), "{interval}");
+    }
+}
