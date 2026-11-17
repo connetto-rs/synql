@@ -7,6 +7,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use sql_traits::traits::{CheckConstraintLike, DatabaseLike};
 
+mod like_pattern;
 mod sub_expressions;
 mod translate_expression;
 use translate_expression::TranslateExpression;
@@ -20,6 +21,13 @@ use crate::{
 /// used to generate Rust code for them.
 pub trait CheckConstraintSynLike: CheckConstraintLike {
     /// Returns the tokenstream representing the check constraint in Rust code.
+    ///
+    /// PostgreSQL cases text in `lower`, `upper` and `ILIKE` by the collation
+    /// of the database, and the generated Rust cases it by the Unicode default
+    /// case mappings, with `str::to_lowercase` and `str::to_uppercase` for the
+    /// functions and `char::to_lowercase` on each character for `ILIKE`. The
+    /// two agree except under collations with their own casing rules, such as
+    /// the Turkish dotted and dotless i.
     ///
     /// # Arguments
     ///

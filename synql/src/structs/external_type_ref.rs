@@ -98,6 +98,12 @@ impl<'workspace> ExternalTypeRef<'workspace> {
         self.crate_name() == "std" && self.rust_type().to_token_stream().to_string() == "String"
     }
 
+    /// Returns whether the type is a `Vec<u8>`.
+    #[must_use]
+    pub fn is_byte_vector(&self) -> bool {
+        self.crate_name() == "std" && self.rust_type().to_token_stream().to_string() == "Vec < u8 >"
+    }
+
     /// Returns whether the type is a `uuid::Uuid`.
     #[must_use]
     pub fn is_uuid(&self) -> bool {

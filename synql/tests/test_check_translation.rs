@@ -102,6 +102,33 @@ CREATE TABLE tallies (
     id INT PRIMARY KEY,
     tally INT NOT NULL CHECK (rules.is_even(tally))
 );
+CREATE TABLE contacts (
+    id INT PRIMARY KEY,
+    email TEXT NOT NULL CHECK (email LIKE '%_@_%' AND email = lower(email)),
+    handle TEXT,
+    nickname TEXT,
+    trusted BOOLEAN NOT NULL,
+    CHECK (handle NOT LIKE 'admin%' OR trusted),
+    CHECK (nickname = lower(nickname) OR trusted),
+    CHECK (upper(nickname) ILIKE 'X%' OR nickname IS NULL OR trusted)
+);
+CREATE TABLE patterns (
+    id INT PRIMARY KEY,
+    path TEXT NOT NULL CHECK (path LIKE '/%/%.rs'),
+    code TEXT NOT NULL CHECK (code LIKE 'a\\_b%c'),
+    tag TEXT NOT NULL CHECK (tag ILIKE 'x%Y_z'),
+    shout TEXT NOT NULL CHECK (shout = upper(shout)),
+    anything TEXT NOT NULL CHECK (anything LIKE '%%')
+);
+CREATE TABLE digests (
+    id INT PRIMARY KEY,
+    token_hash BYTEA NOT NULL CHECK (octet_length(token_hash) = 32),
+    digest BYTEA,
+    note TEXT,
+    trusted BOOLEAN NOT NULL,
+    CHECK (octet_length(digest) = 4 OR trusted),
+    CHECK (octet_length(note) <= 4 OR trusted)
+);
 ";
 
 const CHECKS_MANIFEST: &str = r#"[package]
@@ -182,6 +209,9 @@ synql-check-translation-memos.workspace = true
 synql-check-translation-deadlines.workspace = true
 synql-check-translation-docs.workspace = true
 synql-check-translation-tallies.workspace = true
+synql-check-translation-contacts.workspace = true
+synql-check-translation-patterns.workspace = true
+synql-check-translation-digests.workspace = true
 "#;
 
 const ASSERTIONS_TEST: &str = r#"//! Assertions over the generated validation code.
@@ -344,6 +374,101 @@ fn schema_qualified_calls_reach_their_function() {
     type Tallies = <tallies::table as TableExt>::NewValues;
     assert!(<Tallies as ValidateColumn<tallies::tally>>::validate_column(&2).is_ok());
     assert!(is_function_rejection(<Tallies as ValidateColumn<tallies::tally>>::validate_column(&3)));
+}
+
+#[test]
+fn like_matches_postgresql_wildcards_and_casing() {
+    use synql_check_translation_contacts::contacts;
+    use synql_check_translation_patterns::patterns;
+    type Contacts = <contacts::table as TableExt>::NewValues;
+    type Patterns = <patterns::table as TableExt>::NewValues;
+    let email =
+        |value: &str| <Contacts as ValidateColumn<contacts::email>>::validate_column(&value.to_owned());
+    let path =
+        |value: &str| <Patterns as ValidateColumn<patterns::path>>::validate_column(&value.to_owned());
+    let code =
+        |value: &str| <Patterns as ValidateColumn<patterns::code>>::validate_column(&value.to_owned());
+    let tag =
+        |value: &str| <Patterns as ValidateColumn<patterns::tag>>::validate_column(&value.to_owned());
+    let shout =
+        |value: &str| <Patterns as ValidateColumn<patterns::shout>>::validate_column(&value.to_owned());
+    let anything = |value: &str| {
+        <Patterns as ValidateColumn<patterns::anything>>::validate_column(&value.to_owned())
+    };
+
+    assert!(email("a@b").is_ok());
+    assert!(email("first.last@example.org").is_ok());
+    assert!(is_check_violation(email("@b")));
+    assert!(is_check_violation(email("a@")));
+    assert!(is_check_violation(email("ab")));
+    assert!(is_check_violation(email("A@b")));
+
+    assert!(path("/src/main.rs").is_ok());
+    assert!(path("/a/.rs").is_ok());
+    assert!(path("/a/b/c.rs").is_ok());
+    assert!(is_check_violation(path("/main.rs")));
+    assert!(is_check_violation(path("/a/b.rsx")));
+    assert!(is_check_violation(path("src/a.rs")));
+
+    assert!(code("a_bc").is_ok());
+    assert!(code("a_bxyzc").is_ok());
+    assert!(is_check_violation(code("axbc")));
+    assert!(is_check_violation(code("a_bcd")));
+    assert!(is_check_violation(code("a\\_bc")));
+
+    assert!(tag("XaaYbZ").is_ok());
+    assert!(tag("xAyBz").is_ok());
+    assert!(tag("xybz").is_ok());
+    assert!(is_check_violation(tag("xyz")));
+    assert!(is_check_violation(tag("ayBz")));
+
+    assert!(shout("ÀBC").is_ok());
+    assert!(is_check_violation(shout("AbC")));
+
+    assert!(anything("").is_ok());
+}
+
+#[test]
+fn text_functions_follow_three_valued_logic() {
+    use synql_check_translation_contacts::contacts;
+    let validate = |handle: Option<&str>, nickname: Option<&str>, trusted: bool| {
+        let mut values = contacts::table::empty_new_values();
+        SetColumn::<contacts::handle>::set_column(&mut values, handle.map(str::to_owned));
+        SetColumn::<contacts::nickname>::set_column(&mut values, nickname.map(str::to_owned));
+        SetColumn::<contacts::trusted>::set_column(&mut values, trusted);
+        ValidateRecord::<contacts::table>::validate_record(&values)
+    };
+    assert!(validate(None, None, false).is_ok());
+    assert!(validate(Some("root"), None, false).is_ok());
+    assert!(validate(Some("admin1"), None, true).is_ok());
+    assert!(is_check_violation(validate(Some("admin1"), None, false)));
+    assert!(validate(None, Some("xavier"), false).is_ok());
+    assert!(is_check_violation(validate(None, Some("Xavier"), false)));
+    assert!(is_check_violation(validate(None, Some("yves"), false)));
+    assert!(validate(None, Some("Yves"), true).is_ok());
+}
+
+#[test]
+fn octet_length_counts_bytes() {
+    use synql_check_translation_digests::digests;
+    type Digests = <digests::table as TableExt>::NewValues;
+    let validate = |digest: Option<Vec<u8>>, note: Option<&str>, trusted: bool| {
+        let mut values = digests::table::empty_new_values();
+        SetColumn::<digests::digest>::set_column(&mut values, digest);
+        SetColumn::<digests::note>::set_column(&mut values, note.map(str::to_owned));
+        SetColumn::<digests::trusted>::set_column(&mut values, trusted);
+        ValidateRecord::<digests::table>::validate_record(&values)
+    };
+    assert!(<Digests as ValidateColumn<digests::token_hash>>::validate_column(&vec![0; 32]).is_ok());
+    assert!(is_check_violation(
+        <Digests as ValidateColumn<digests::token_hash>>::validate_column(&vec![0; 31])
+    ));
+    assert!(validate(None, None, false).is_ok());
+    assert!(validate(Some(vec![1, 2, 3, 4]), None, false).is_ok());
+    assert!(is_check_violation(validate(Some(vec![1]), None, false)));
+    assert!(validate(None, Some("éé"), false).is_ok());
+    assert!(is_check_violation(validate(None, Some("ééé"), false)));
+    assert!(validate(None, Some("abcde"), true).is_ok());
 }
 "#;
 

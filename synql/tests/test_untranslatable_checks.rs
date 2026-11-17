@@ -147,6 +147,28 @@ fn builtin_functions_need_their_operand_types() {
 }
 
 #[test]
+fn like_needs_a_literal_pattern_with_the_default_escape() {
+    assert!(matches!(
+        unsupported_reason(
+            "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, other TEXT, CHECK (name LIKE other));"
+        ),
+        UnsupportedCheck::Expression(pattern) if pattern == "other"
+    ));
+    assert!(matches!(
+        unsupported_reason(
+            "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (name ILIKE 'x\\'));"
+        ),
+        UnsupportedCheck::Expression(pattern) if pattern == "'x\\'"
+    ));
+    assert!(matches!(
+        unsupported_reason(
+            "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (name LIKE 'x!%' ESCAPE '!'));"
+        ),
+        UnsupportedCheck::Expression(_)
+    ));
+}
+
+#[test]
 fn validation_functions_need_plain_mapped_calls() {
     assert!(matches!(
         unsupported_reason(
