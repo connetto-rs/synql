@@ -17,6 +17,7 @@ use sql_traits::{
         CheckConstraintLike, ColumnLike, DataTypeLike, DatabaseLike, ForeignKeyLike, TableLike,
     },
 };
+use sqlparser::ast::{Expr, Value, ValueWithSpan};
 use syn::Ident;
 
 use crate::{
@@ -24,6 +25,16 @@ use crate::{
     traits::{CheckConstraintSynLike, TableSynLike},
     utils::{is_reserved_diesel_keyword, is_reserved_rust_word},
 };
+
+/// Returns whether `expr` is the NULL literal, through any parentheses and
+/// casts around it, as in `(NULL)` and `NULL::integer`.
+fn is_null_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Nested(inner) | Expr::Cast { expr: inner, .. } => is_null_literal(inner),
+        Expr::Value(ValueWithSpan { value: Value::Null, .. }) => true,
+        _ => false,
+    }
+}
 
 /// Trait implemented by types that represent SQL columns and can be used to
 /// generate Rust code for them.
@@ -369,7 +380,11 @@ pub trait ColumnSynLike: ColumnLike {
         {
             return Ok(quote! {});
         }
-        let Some(default_value) = self.default_expression().map(ToString::to_string) else {
+        let Some(default_value) = self
+            .default_expression()
+            .filter(|expression| !is_null_literal(expression))
+            .map(ToString::to_string)
+        else {
             return Ok(quote! {});
         };
         let Some(external_postgres_type) = self.external_postgres_type(workspace, database) else {
@@ -381,9 +396,6 @@ pub trait ColumnSynLike: ColumnLike {
         };
 
         let casted_default_value = match default_value.as_str() {
-            candidate if candidate.starts_with("NULL::") => {
-                return Ok(quote! {});
-            }
             candidate if external_postgres_type.is_string() => {
                 let stripped_value =
                     candidate.trim_end_matches("::character varying").trim_matches('\'');
