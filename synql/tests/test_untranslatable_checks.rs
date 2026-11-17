@@ -147,7 +147,7 @@ fn builtin_functions_need_their_operand_types() {
 }
 
 #[test]
-fn like_needs_a_literal_pattern_with_the_default_escape() {
+fn like_needs_text_and_a_literal_pattern_with_the_default_escape() {
     assert!(matches!(
         unsupported_reason(
             "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, other TEXT, CHECK (name LIKE other));"
@@ -165,6 +165,10 @@ fn like_needs_a_literal_pattern_with_the_default_escape() {
             "CREATE TABLE t (id INT PRIMARY KEY, name TEXT, CHECK (name LIKE 'x!%' ESCAPE '!'));"
         ),
         UnsupportedCheck::Expression(_)
+    ));
+    assert!(matches!(
+        unsupported_reason("CREATE TABLE t (id INT PRIMARY KEY, data BYTEA, CHECK (data LIKE 'a%'));"),
+        UnsupportedCheck::Operator(operator) if operator == "LIKE"
     ));
 }
 

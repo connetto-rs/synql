@@ -118,7 +118,9 @@ CREATE TABLE patterns (
     code TEXT NOT NULL CHECK (code LIKE 'a\\_b%c'),
     tag TEXT NOT NULL CHECK (tag ILIKE 'x%Y_z'),
     shout TEXT NOT NULL CHECK (shout = upper(shout)),
-    anything TEXT NOT NULL CHECK (anything LIKE '%%')
+    anything TEXT NOT NULL CHECK (anything LIKE '%%'),
+    exact TEXT NOT NULL CHECK (exact LIKE 'a_c'),
+    spread TEXT NOT NULL CHECK (spread LIKE '%a%b%')
 );
 CREATE TABLE digests (
     id INT PRIMARY KEY,
@@ -395,6 +397,11 @@ fn like_matches_postgresql_wildcards_and_casing() {
     let anything = |value: &str| {
         <Patterns as ValidateColumn<patterns::anything>>::validate_column(&value.to_owned())
     };
+    let exact =
+        |value: &str| <Patterns as ValidateColumn<patterns::exact>>::validate_column(&value.to_owned());
+    let spread = |value: &str| {
+        <Patterns as ValidateColumn<patterns::spread>>::validate_column(&value.to_owned())
+    };
 
     assert!(email("a@b").is_ok());
     assert!(email("first.last@example.org").is_ok());
@@ -426,6 +433,18 @@ fn like_matches_postgresql_wildcards_and_casing() {
     assert!(is_check_violation(shout("AbC")));
 
     assert!(anything("").is_ok());
+
+    assert!(exact("abc").is_ok());
+    assert!(exact("aÀc").is_ok());
+    assert!(is_check_violation(exact("ac")));
+    assert!(is_check_violation(exact("abcd")));
+    assert!(is_check_violation(exact("xbc")));
+
+    assert!(spread("ab").is_ok());
+    assert!(spread("xaxxbx").is_ok());
+    assert!(spread("bab").is_ok());
+    assert!(is_check_violation(spread("ba")));
+    assert!(is_check_violation(spread("")));
 }
 
 #[test]
