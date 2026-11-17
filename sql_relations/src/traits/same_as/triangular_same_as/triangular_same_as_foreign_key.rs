@@ -47,10 +47,10 @@ impl<'db, FK: HorizontalSameAsForeignKeyLike> Triangular<'db, FK> {
     /// )?;
     /// let child_table =
     ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
-    /// let triangles = child_table
-    ///     .foreign_keys(&db)?
-    ///     .filter_map(|fk| fk.triangular_same_as(&db).transpose())
-    ///     .collect::<Result<Vec<_>, _>>()?;
+    /// let mut triangles = Vec::new();
+    /// for foreign_key in child_table.foreign_keys(&db)? {
+    ///     triangles.extend(foreign_key.triangular_same_as(&db)?);
+    /// }
     /// assert_eq!(triangles.len(), 1);
     /// let triangle = &triangles[0];
     /// assert_eq!(triangle.key_column().column_name(), "sibling_id");

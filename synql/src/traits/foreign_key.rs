@@ -37,11 +37,9 @@ pub trait ForeignKeySynLike: ForeignKeyLike {
             .host_columns(database)?
             .zip(self.referenced_columns(database)?)
             .collect::<Vec<_>>();
-        let index_columns = self
-            .is_referenced_unique_key(database)?
-            .map(|unique_index| unique_index.columns(database))
-            .transpose()?
-            .map_or_else(Vec::new, Iterator::collect::<Vec<_>>);
+        let referenced_index = self.is_referenced_unique_key(database)?;
+        let index_columns = referenced_index.map(|index| index.columns(database)).transpose()?;
+        let index_columns = index_columns.map_or_else(Vec::new, Iterator::collect::<Vec<_>>);
         column_pairs.sort_by_key(|(_, referenced_column)| {
             index_columns.iter().position(|index_column| index_column == referenced_column)
         });
