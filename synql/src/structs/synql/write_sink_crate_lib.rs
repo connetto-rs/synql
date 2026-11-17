@@ -2,6 +2,7 @@
 
 use std::{collections::HashSet, io::Write, path::Path};
 
+use proc_macro2::TokenStream;
 use quote::quote;
 
 use crate::{
@@ -10,16 +11,15 @@ use crate::{
 };
 
 impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
-    pub(super) fn write_sink_crate_lib<'a>(
-        &self,
+    /// Writes the `lib.rs` of a sink crate re-exporting the crates of
+    /// `tables`, followed by `items`.
+    pub(super) fn write_sink_crate_lib(
         workspace: &Workspace,
         sink_crate_name: &str,
         sink_crate_path: &Path,
-        tables: impl Iterator<Item = &'a DB::Table>,
-    ) -> Result<(), crate::Error>
-    where
-        DB::Table: 'a,
-    {
+        tables: &[&DB::Table],
+        items: &[TokenStream],
+    ) -> Result<(), crate::Error> {
         // We create the `src` directory if it does not exist
         let src_path = sink_crate_path.join("src");
         std::fs::create_dir_all(&src_path)?;
@@ -34,9 +34,6 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         let mut re_exports = Vec::new();
         let mut re_exported_crates = HashSet::new();
         for table in tables {
-            if self.skip_table(table)? {
-                continue;
-            }
             let crate_ident = table.crate_ident(workspace);
             let table_struct_ident = table.table_singular_camel_ident();
             let table_ident = table.table_ident();
@@ -53,6 +50,8 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             #![doc = #crate_documentation]
 
             #(#re_exports)*
+
+            #(#items)*
         };
 
         write!(buffer, "{content}")?;

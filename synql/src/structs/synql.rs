@@ -31,6 +31,16 @@ pub type Callback<'db, T, D> =
 pub type TomlCallback<'db, T, D> =
     Box<dyn Fn(&T, &D) -> Result<Option<TomlDependency>, crate::Error> + 'db>;
 
+/// Type alias for the callback function used to generate additional code for
+/// the sink crate, which receives the tables the sink crate re-exports.
+pub type SinkCallback<'db, T, D> =
+    Box<dyn Fn(&[&T], &D, &Workspace) -> Result<Option<TokenStream>, crate::Error> + 'db>;
+
+/// Type alias for the callback function used to generate additional
+/// dependencies for the sink crate.
+pub type SinkTomlCallback<'db, D> =
+    Box<dyn Fn(&D) -> Result<Option<TomlDependency>, crate::Error> + 'db>;
+
 /// Struct representing a SQL workspace.
 pub struct SynQL<'db, DB: SynQLDatabaseLike> {
     /// The underlying database which will be used to generate the workspace.
@@ -69,6 +79,10 @@ pub struct SynQL<'db, DB: SynQLDatabaseLike> {
     callbacks: Vec<Callback<'db, DB::Table, DB>>,
     /// Callbacks to generate additional dependencies for each table.
     toml_callbacks: Vec<TomlCallback<'db, DB::Table, DB>>,
+    /// Callbacks to generate additional code for the sink crate.
+    sink_callbacks: Vec<SinkCallback<'db, DB::Table, DB>>,
+    /// Callbacks to generate additional dependencies for the sink crate.
+    sink_toml_callbacks: Vec<SinkTomlCallback<'db, DB>>,
 }
 
 impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
@@ -427,21 +441,38 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
                 workspace.path().join(workspace.crate_base_path()).join(sink_crate_name);
             std::fs::create_dir_all(&sink_crate_path)?;
 
+            let mut sink_tables = Vec::new();
+            for table in self.database.tables() {
+                if !self.skip_table(table)? {
+                    sink_tables.push(table);
+                }
+            }
+
             let writing_sink_toml = Task::new("writing_sink_crate_toml");
-            self.write_sink_crate_toml(
+            let mut sink_dependencies = Vec::new();
+            for callback in &self.sink_toml_callbacks {
+                sink_dependencies.extend(callback(self.database)?);
+            }
+            Self::write_sink_crate_toml(
                 &workspace,
                 sink_crate_name,
                 &sink_crate_path,
-                self.database.tables(),
+                &sink_tables,
+                &sink_dependencies,
             )?;
             time_tracker.add_or_extend_completed_task(writing_sink_toml);
 
             let writing_sink_lib = Task::new("writing_sink_crate_lib");
-            self.write_sink_crate_lib(
+            let mut sink_items = Vec::new();
+            for callback in &self.sink_callbacks {
+                sink_items.extend(callback(&sink_tables, self.database, &workspace)?);
+            }
+            Self::write_sink_crate_lib(
                 &workspace,
                 sink_crate_name,
                 &sink_crate_path,
-                self.database.tables(),
+                &sink_tables,
+                &sink_items,
             )?;
             time_tracker.add_or_extend_completed_task(writing_sink_lib);
         }
@@ -459,8 +490,9 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
                 let mut dag_tables = Vec::new();
                 for table in self.database.tables() {
-                    if table.table_name() == root_table.table_name()
-                        || table.depends_on(self.database, root_table)?
+                    if !self.skip_table(table)?
+                        && (table.table_name() == root_table.table_name()
+                            || table.depends_on(self.database, root_table)?)
                     {
                         dag_tables.push(table);
                     }
@@ -468,21 +500,23 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
                 let writing_sink_toml =
                     Task::new(&format!("writing_sink_crate_toml_{sink_crate_name}"));
-                self.write_sink_crate_toml(
+                Self::write_sink_crate_toml(
                     &workspace,
                     &sink_crate_name,
                     &sink_crate_path,
-                    dag_tables.iter().copied(),
+                    &dag_tables,
+                    &[],
                 )?;
                 time_tracker.add_or_extend_completed_task(writing_sink_toml);
 
                 let writing_sink_lib =
                     Task::new(&format!("writing_sink_crate_lib_{sink_crate_name}"));
-                self.write_sink_crate_lib(
+                Self::write_sink_crate_lib(
                     &workspace,
                     &sink_crate_name,
                     &sink_crate_path,
-                    dag_tables.iter().copied(),
+                    &dag_tables,
+                    &[],
                 )?;
                 time_tracker.add_or_extend_completed_task(writing_sink_lib);
             }
