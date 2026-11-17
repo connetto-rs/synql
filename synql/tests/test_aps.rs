@@ -12,11 +12,8 @@ use synql::prelude::*;
 
 #[test]
 fn test_aps() -> Result<(), Box<dyn std::error::Error>> {
-    // We get the cargo toml.
-    // And we adequately move to the emi-monorepo root.
-    // let temp_dir = tempfile::tempdir()?;
-    let temp_dir = "../../emi_local";
-    let workspace_path = std::path::Path::new(temp_dir);
+    let temp_dir = tempfile::tempdir()?;
+    let workspace_path = temp_dir.path();
     let db: ParserDB = ParserDB::from_git_url::<PostgreSqlDialect>(
         "https://github.com/earth-metabolome-initiative/asset-procedure-schema.git",
     )?;
@@ -30,9 +27,6 @@ fn test_aps() -> Result<(), Box<dyn std::error::Error>> {
         .into();
 
     synql.generate().expect("Unable to generate workspace");
-
-    // Verify that the workspace directory was created
-    assert!(workspace_path.exists(), "Workspace directory should be created");
 
     // Verify that Cargo.toml exists
     let cargo_toml = workspace_path.join("Cargo.toml");
