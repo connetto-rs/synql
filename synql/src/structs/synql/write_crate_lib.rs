@@ -3,7 +3,7 @@
 use std::io::Write;
 
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use sql_relations::prelude::{ColumnLike, TableLike};
 
 use crate::{
@@ -46,7 +46,12 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         });
         let mut table_items = Vec::with_capacity(tables.len());
         for table in tables {
-            table_items.push(self.table_items(table, workspace)?);
+            let items = self.table_items(table, workspace)?;
+            table_items.push(if tables.len() > 1 {
+                Self::table_module(table, &items)
+            } else {
+                items
+            });
         }
 
         let content = quote! {
@@ -59,6 +64,31 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         write!(buffer, "{content}")?;
 
         Ok(())
+    }
+
+    /// Wraps the `items` of `table` in a public module, named after the
+    /// table with a `_model` suffix, whose items the crate root re-exports.
+    ///
+    /// The `TableModel` derive names the traits it generates by joining the
+    /// model and column names, so two tables of one crate can generate the
+    /// same trait name. The module keeps each table's items in its own
+    /// namespace, as a crate of its own would, and a colliding name is
+    /// reachable through the module of its table.
+    fn table_module(table: &DB::Table, items: &TokenStream) -> TokenStream {
+        let module_ident = format_ident!("{}_model", table.table_snake_name());
+        let module_documentation =
+            format!("Items generated for the `{}` table.", table.table_name());
+        quote! {
+            #[doc=#module_documentation]
+            pub mod #module_ident {
+                #items
+            }
+            #[allow(
+                ambiguous_glob_reexports,
+                reason = "Tables of one crate can generate the same name, reachable through the module of each table"
+            )]
+            pub use #module_ident::*;
+        }
     }
 
     /// Returns the items generated for `table`.

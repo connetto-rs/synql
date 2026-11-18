@@ -3,13 +3,19 @@
 
 use std::{path::Path, process::Command};
 
+use quote::quote;
 use sql_traits::prelude::*;
 use sqlparser::dialect::GenericDialect;
 use synql::prelude::*;
 
 const SCHEMA: &str = "
+CREATE TABLE user_states (
+    id SERIAL PRIMARY KEY,
+    label TEXT NOT NULL
+);
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
+    state_id INT NOT NULL REFERENCES user_states(id),
     name TEXT NOT NULL CHECK (name <> '')
 );
 CREATE TABLE posts (
@@ -101,6 +107,12 @@ fn test_grouped_tables_generation() {
         .dag_sink_crate_prefix("sink_")
         .deny(archived_settings)
         .toml_callback(|_table, _db| Ok(Some(TomlDependency::new("serde_json").version("1.0")?)))
+        .sink_callback(|_tables, _db, _workspace| {
+            Ok(Some(quote! {
+                pub use grouped_users::user_states_model::SetUserStateId as SetUserStatesId;
+                pub use grouped_users::users_model::SetUserStateId as SetUsersStateId;
+            }))
+        })
         .group_tables(1.0)
         .into();
     synql.generate().expect("Unable to generate workspace");

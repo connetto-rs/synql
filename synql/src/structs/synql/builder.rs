@@ -174,6 +174,13 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
     /// and larger crates, and `1.0` is the standard modularity. Each crate is
     /// named after the table of its group which most of the other tables of
     /// the group depend on.
+    ///
+    /// A crate holding several tables writes the items of each table into a
+    /// public module named after the table with a `_model` suffix, such as
+    /// `users_model`, and re-exports them from its root. A name that two
+    /// tables of the crate both generate, such as the `SetUserStateId` trait
+    /// of `users.state_id` and of `user_states.id`, is reachable only
+    /// through the module of its table.
     #[must_use]
     #[inline]
     pub fn group_tables(mut self, resolution: f64) -> Self {
