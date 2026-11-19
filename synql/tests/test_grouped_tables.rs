@@ -1,5 +1,6 @@
-//! Test module verifying that tables grouped into shared crates generate a
-//! workspace which compiles and documents.
+//! Test module verifying how tables are grouped into crates, and that tables
+//! grouped into shared crates generate a workspace which compiles and
+//! documents.
 
 use std::{path::Path, process::Command};
 
@@ -90,6 +91,60 @@ fn run_cargo(workspace_path: &Path, arguments: &[&str]) {
     );
 }
 
+/// Returns the sorted names of the crates of the workspace at
+/// `workspace_path` whose directory starts with `prefix`, without the prefix.
+fn crate_names(workspace_path: &Path, prefix: &str) -> Vec<String> {
+    let mut crates: Vec<String> = std::fs::read_dir(workspace_path)
+        .expect("Unable to list the workspace")
+        .map(|entry| entry.expect("Unable to read a workspace entry").file_name())
+        .filter_map(|name| name.to_str()?.strip_prefix(prefix).map(str::to_owned))
+        .collect();
+    crates.sort_unstable();
+    crates
+}
+
+#[test]
+fn test_tables_grouped_by_default() {
+    let db = ParserDB::parse::<GenericDialect>(SCHEMA).expect("Unable to parse the schema");
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let workspace_path = temp_dir.path().join("default_workspace");
+
+    let synql: SynQL<ParserDB> = SynQL::new(&db, &workspace_path).name("default").into();
+    synql.generate().expect("Unable to generate workspace");
+
+    assert_eq!(crate_names(&workspace_path, "default-"), ["projects", "settings", "users"]);
+}
+
+#[test]
+fn test_one_crate_per_table() {
+    let db = ParserDB::parse::<GenericDialect>(SCHEMA).expect("Unable to parse the schema");
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let workspace_path = temp_dir.path().join("ungrouped_workspace");
+
+    let synql: SynQL<ParserDB> =
+        SynQL::new(&db, &workspace_path).name("ungrouped").one_crate_per_table().into();
+    synql.generate().expect("Unable to generate workspace");
+
+    assert_eq!(
+        crate_names(&workspace_path, "ungrouped-"),
+        [
+            "archived_settings",
+            "comments",
+            "likes",
+            "milestones",
+            "pinned_comments",
+            "posts",
+            "projects",
+            "settings",
+            "task_assignments",
+            "tasks",
+            "user_badges",
+            "user_states",
+            "users",
+        ]
+    );
+}
+
 #[test]
 fn test_grouped_tables_generation() {
     let db = ParserDB::parse::<GenericDialect>(SCHEMA).expect("Unable to parse the schema");
@@ -113,17 +168,10 @@ fn test_grouped_tables_generation() {
                 pub use grouped_users::users_model::SetUserStateId as SetUsersStateId;
             }))
         })
-        .group_tables(1.0)
         .into();
     synql.generate().expect("Unable to generate workspace");
 
-    let mut crates: Vec<String> = std::fs::read_dir(&workspace_path)
-        .expect("Unable to list the workspace")
-        .map(|entry| entry.expect("Unable to read a workspace entry").file_name())
-        .filter_map(|name| name.to_str()?.strip_prefix("grouped-").map(str::to_owned))
-        .collect();
-    crates.sort_unstable();
-    assert_eq!(crates, ["projects", "settings", "users"]);
+    assert_eq!(crate_names(&workspace_path, "grouped-"), ["projects", "settings", "users"]);
 
     let users_lib = std::fs::read_to_string(workspace_path.join("grouped-users/src/lib.rs"))
         .expect("Unable to read the users crate");

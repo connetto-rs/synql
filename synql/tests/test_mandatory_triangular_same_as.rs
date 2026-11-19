@@ -25,6 +25,7 @@ fn test_mandatory_triangular_same_as() -> Result<(), Box<dyn std::error::Error>>
         .name("synql-mandatory-triangular")
         .generate_workspace_toml()
         .generate_rustfmt()
+        .one_crate_per_table()
         .into();
     synql.generate().expect("Unable to generate workspace");
 

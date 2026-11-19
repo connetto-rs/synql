@@ -11,6 +11,12 @@ use crate::{
 };
 
 /// Struct to build `SynQL` instances.
+///
+/// The built workspace groups densely related tables into shared crates at
+/// the standard modularity resolution `1.0`. Call
+/// [`group_tables`](Self::group_tables) to group at another resolution, or
+/// [`one_crate_per_table`](Self::one_crate_per_table) to generate a crate
+/// for each table.
 pub struct SynQLBuilder<'db, DB: SynQLDatabaseLike> {
     database: &'db DB,
     path: &'db Path,
@@ -53,7 +59,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
             sink_crate_name: None,
             dag_sink_crate_prefix: None,
             external_crates: Vec::new(),
-            table_grouping_resolution: None,
+            table_grouping_resolution: Some(1.0),
             members: Vec::new(),
             callbacks: Vec::new(),
             toml_callbacks: Vec::new(),
@@ -163,8 +169,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
         self
     }
 
-    /// Groups densely related tables into shared crates instead of
-    /// generating a crate for each table.
+    /// Groups densely related tables into shared crates at the given
+    /// `resolution` in place of the default `1.0`.
     ///
     /// The groups are the communities that the directed Leiden algorithm,
     /// [`acyclic_directed_leiden`](geometric_traits::traits::DirectedLeiden::acyclic_directed_leiden)
@@ -181,10 +187,23 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
     /// tables of the crate both generate, such as the `SetUserStateId` trait
     /// of `users.state_id` and of `user_states.id`, is reachable only
     /// through the module of its table.
+    ///
+    /// Call [`one_crate_per_table`](Self::one_crate_per_table) to generate a
+    /// crate for each table instead.
     #[must_use]
     #[inline]
     pub fn group_tables(mut self, resolution: f64) -> Self {
         self.table_grouping_resolution = Some(resolution);
+        self
+    }
+
+    /// Generates a crate for each table instead of grouping densely related
+    /// tables into shared crates as [`group_tables`](Self::group_tables)
+    /// does by default.
+    #[must_use]
+    #[inline]
+    pub fn one_crate_per_table(mut self) -> Self {
+        self.table_grouping_resolution = None;
         self
     }
 

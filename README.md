@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Codecov](https://codecov.io/gh/connetto-rs/synql/branch/main/graph/badge.svg)](https://codecov.io/gh/connetto-rs/synql)
 
-SynQL is a library designed to generate a modular Cargo workspace from a SQL schema. SynQL generates a separate Type Safe Rust crate for each table in your database.
+SynQL is a library designed to generate a modular Cargo workspace from a SQL schema. SynQL generates Type Safe Rust crates for the tables in your database, grouping densely related tables into shared crates.
 
 This architectural choice enables:
 
@@ -13,7 +13,7 @@ This architectural choice enables:
 - **Granular Dependencies**: Consumers only import the specific table crates they need.
 - **Unified Access**: Optionally generates a 'sink' crate that re-exports all table crates, allowing consumption via a single dependency in projects that need access to the entire schema.
 - **Micro-crate Architecture**: Facilitates maintenance of large schemas by isolating changing components.
-- **Grouped Crates**: Optionally merges densely related tables into shared crates, the communities that the Leiden algorithm finds in the table dependency graph, constrained so that the crates still depend on each other without cycles. The resolution passed to `group_tables` sets their size.
+- **Grouped Crates**: Merges densely related tables into shared crates by default, the communities that the Leiden algorithm finds in the table dependency graph at the standard modularity resolution `1.0`, constrained so that the crates still depend on each other without cycles. Another resolution passed to `group_tables` sets their size, and `one_crate_per_table` generates a crate for each table instead.
 
 ## Features
 

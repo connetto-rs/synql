@@ -36,6 +36,7 @@ fn test_dag_sink_generation() -> Result<(), Box<dyn std::error::Error>> {
         .name("synql-dag-workspace")
         .generate_workspace_toml()
         .dag_sink_crate_prefix("sink_")
+        .one_crate_per_table()
         .into();
 
     synql.generate().expect("Unable to generate workspace");

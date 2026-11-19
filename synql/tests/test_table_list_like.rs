@@ -28,6 +28,7 @@ fn test_ancestral_table_list_default_decorator() -> Result<(), Box<dyn std::erro
         .name("synql-table-list")
         .generate_workspace_toml()
         .generate_rustfmt()
+        .one_crate_per_table()
         .into();
     synql.generate().expect("Unable to generate workspace");
 
