@@ -13,7 +13,7 @@ use sql_traits::{
     errors::LookupError,
     traits::{CheckConstraintLike, ColumnLike, DataTypeLike, ForeignKeyLike, TableLike},
 };
-use sqlparser::ast::{Expr, Value, ValueWithSpan};
+use sqlparser::ast::{Expr, FunctionArguments, Value, ValueWithSpan};
 use syn::Ident;
 
 use crate::{
@@ -39,6 +39,28 @@ fn string_literal(expr: &Expr) -> Option<&str> {
         Expr::Nested(inner) | Expr::Cast { expr: inner, .. } => string_literal(inner),
         Expr::Value(ValueWithSpan { value: Value::SingleQuotedString(string), .. }) => Some(string),
         _ => None,
+    }
+}
+
+/// Returns whether `expr` reads the start time of the current transaction,
+/// which PostgreSQL spells `now()`, `transaction_timestamp()` and
+/// `CURRENT_TIMESTAMP` in any case, through any parentheses around it.
+fn is_current_timestamp(expr: &Expr) -> bool {
+    match expr {
+        Expr::Nested(inner) => is_current_timestamp(inner),
+        Expr::Function(function) => {
+            let argumentless = match &function.args {
+                FunctionArguments::None => true,
+                FunctionArguments::List(list) => list.args.is_empty(),
+                FunctionArguments::Subquery(_) => false,
+            };
+            let name = function.name.to_string();
+            argumentless
+                && ["now", "transaction_timestamp", "current_timestamp"]
+                    .iter()
+                    .any(|current_timestamp| name.eq_ignore_ascii_case(current_timestamp))
+        }
+        _ => false,
     }
 }
 
@@ -411,10 +433,14 @@ pub trait ColumnSynLike: ColumnLike {
                     ::rosetta_uuid::Uuid::utc_v7()
                 }
             }
-            "CURRENT_TIMESTAMP" if external_postgres_type.crate_name() == "chrono" => {
+            _ if is_current_timestamp(default_expression)
+                && external_postgres_type.crate_name() == "chrono" =>
+            {
                 quote! { ::chrono::Utc::now() }
             }
-            "CURRENT_TIMESTAMP" if external_postgres_type.crate_name() == "rosetta-utc" => {
+            _ if is_current_timestamp(default_expression)
+                && external_postgres_type.crate_name() == "rosetta-utc" =>
+            {
                 quote! { ::rosetta_utc::TimestampUTC::default() }
             }
             _ => {
