@@ -46,6 +46,9 @@ edition.workspace = true
 serde.workspace = true
 diesel = {{ workspace = true, features = ["postgres_backend"] }}
 
+[features]
+sqlite = ["diesel/sqlite"]
+
 [lints]
 workspace = true
 "#

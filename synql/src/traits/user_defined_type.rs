@@ -113,7 +113,7 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
     }
 
     /// Returns the workspace dependency on the crate holding the Rust enum of
-    /// this type.
+    /// this type, with the `sqlite` feature of the crate enabled.
     ///
     /// # Panics
     ///
@@ -123,6 +123,7 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
         TomlDependency::new(self.enum_crate_name(workspace))
             .path(self.enum_crate_relative_path(workspace).display().to_string())
             .expect("Should be able to set path")
+            .feature("sqlite")
     }
 
     /// Returns the ident of the Rust enum of this type and of its diesel SQL
@@ -207,6 +208,9 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
     /// Returns the diesel SQL type of this type, to be placed in the
     /// `sql_types` module at the root of its crate, or `None` when this is
     /// not an enum type.
+    ///
+    /// Behind the `sqlite` feature of the crate, the SQL type is also the
+    /// SQLite `Text` holding the label.
     #[must_use]
     fn enum_sql_type_tokens(&self) -> Option<TokenStream> {
         self.enumeration()?;
@@ -223,13 +227,18 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
             #[doc = #documentation]
             #[derive(Debug, Clone, Copy, ::diesel::query_builder::QueryId, ::diesel::sql_types::SqlType)]
             #[diesel(#postgres_type)]
+            #[cfg_attr(feature = "sqlite", diesel(sqlite_type(name = "Text")))]
             pub struct #enum_ident;
         })
     }
 
     /// Returns the Rust enum of this type with its conversions from and to
-    /// PostgreSQL, to be placed at the root of its crate, or `None` when this
-    /// is not an enum type.
+    /// PostgreSQL, and from and to SQLite behind the `sqlite` feature of its
+    /// crate, to be placed at the root of its crate, or `None` when this is
+    /// not an enum type.
+    ///
+    /// Both backends exchange the label and refuse to read a label the type
+    /// does not have.
     ///
     /// The tokens reach the diesel SQL type through the `sql_types` module at
     /// the root of the crate.
@@ -285,6 +294,33 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
                             "Unrecognized label of the `{}` enum type: {}",
                             #qualified_name,
                             String::from_utf8_lossy(unknown)
+                        )
+                        .into()),
+                    }
+                }
+            }
+
+            #[cfg(feature = "sqlite")]
+            impl ::diesel::serialize::ToSql<crate::sql_types::#enum_ident, ::diesel::sqlite::Sqlite> for #enum_ident {
+                fn to_sql<'b>(
+                    &'b self,
+                    out: &mut ::diesel::serialize::Output<'b, '_, ::diesel::sqlite::Sqlite>,
+                ) -> ::diesel::serialize::Result {
+                    out.set_value(match *self {
+                        #(Self::#variant_idents => #labels,)*
+                    });
+                    Ok(::diesel::serialize::IsNull::No)
+                }
+            }
+
+            #[cfg(feature = "sqlite")]
+            impl ::diesel::deserialize::FromSql<crate::sql_types::#enum_ident, ::diesel::sqlite::Sqlite> for #enum_ident {
+                fn from_sql(mut value: ::diesel::sqlite::SqliteValue<'_, '_, '_>) -> ::diesel::deserialize::Result<Self> {
+                    match value.read_text() {
+                        #(#labels => Ok(Self::#variant_idents),)*
+                        unknown => Err(format!(
+                            "Unrecognized label of the `{}` enum type: {unknown}",
+                            #qualified_name
                         )
                         .into()),
                     }
