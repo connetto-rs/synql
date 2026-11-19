@@ -10,7 +10,8 @@ use synql::prelude::*;
 fn disposals_source(schema: &str) -> String {
     let db = ParserDB::parse::<PostgreSqlDialect>(schema).expect("Unable to parse the schema");
     let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
-    let synql: SynQL<ParserDB> = SynQL::new(&db, temp_dir.path()).name("sameas").into();
+    let synql: SynQL<ParserDB> =
+        SynQL::new(&db, temp_dir.path()).name("sameas").one_crate_per_table().into();
     synql.generate().expect("Unable to generate workspace");
     let source = std::fs::read_to_string(
         temp_dir.path().join("sameas-disposals").join("src").join("lib.rs"),
