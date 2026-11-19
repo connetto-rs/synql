@@ -49,11 +49,8 @@ fn is_current_timestamp(expr: &Expr) -> bool {
     match expr {
         Expr::Nested(inner) => is_current_timestamp(inner),
         Expr::Function(function) => {
-            let argumentless = match &function.args {
-                FunctionArguments::None => true,
-                FunctionArguments::List(list) => list.args.is_empty(),
-                FunctionArguments::Subquery(_) => false,
-            };
+            let argumentless = matches!(&function.args, FunctionArguments::None)
+                || matches!(&function.args, FunctionArguments::List(list) if list.args.is_empty());
             let name = function.name.to_string();
             argumentless
                 && ["now", "transaction_timestamp", "current_timestamp"]
