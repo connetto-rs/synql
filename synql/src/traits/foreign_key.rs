@@ -61,7 +61,7 @@ pub trait ForeignKeySynLike: ForeignKeyLike {
             .collect::<Vec<syn::Path>>();
 
         Ok(quote! {
-            #[table_model(foreign_key((#(#host_column_paths,)*), (#(#foreign_column_paths),*)))]
+            #[table_model(foreign_key((#(#host_column_paths),*), (#(#foreign_column_paths),*)))]
         })
     }
 }

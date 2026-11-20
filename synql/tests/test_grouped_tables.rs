@@ -177,7 +177,7 @@ fn test_grouped_tables_generation() {
         .expect("Unable to read the users crate");
     assert!(users_lib.contains("extern crate self as grouped_users"), "{users_lib}");
     assert!(users_lib.contains("pub struct PinnedComment"), "{users_lib}");
-    assert!(users_lib.contains("# ! [allow (non_snake_case)]"), "{users_lib}");
+    assert!(users_lib.contains("#![allow(non_snake_case)]"), "{users_lib}");
 
     let users_toml = std::fs::read_to_string(workspace_path.join("grouped-users/Cargo.toml"))
         .expect("Unable to read the users manifest");

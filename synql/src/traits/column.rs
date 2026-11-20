@@ -293,8 +293,10 @@ pub trait ColumnSynLike: ColumnLike {
         workspace: &Workspace,
         database: &Self::DB,
     ) -> Result<Vec<proc_macro2::TokenStream>, LookupError> {
-        // Several composite keys sharing a key column mirror the same columns.
-        let mut same_as_columns = Vec::new();
+        // Several composite keys sharing a key column mirror the same columns,
+        // and one attribute lists every key tying this column to a referenced
+        // column.
+        let mut same_as_columns: Vec<(_, Vec<_>)> = Vec::new();
         for same_as in self.horizontal_same_as_foreign_keys(database)? {
             if !same_as.is_horizontal_same_as_of_triangular(database)? {
                 continue;
@@ -308,20 +310,27 @@ pub trait ColumnSynLike: ColumnLike {
             else {
                 continue;
             };
-            if !same_as_columns.contains(&(referenced_column, key)) {
-                same_as_columns.push((referenced_column, key));
+            match same_as_columns.iter_mut().find(|(column, _)| *column == referenced_column) {
+                Some((_, keys)) if keys.contains(&key) => {}
+                Some((_, keys)) => keys.push(key),
+                None => same_as_columns.push((referenced_column, vec![key])),
             }
         }
         Ok(same_as_columns
             .into_iter()
-            .map(|(referenced_column, key)| {
-                let key_ident = key.column_snake_ident();
+            .map(|(referenced_column, keys)| {
                 let satellite_table = referenced_column.table(database);
                 let satellite_table_ident = satellite_table.table_snake_ident();
                 let satellite_table_crate = satellite_table.crate_ident(workspace);
                 let referenced_column_ident = referenced_column.column_snake_ident();
+                let keys = if let [key] = keys.as_slice() {
+                    key.column_snake_ident().into_token_stream()
+                } else {
+                    let key_idents = keys.into_iter().map(ColumnSynLike::column_snake_ident);
+                    quote! { (#(#key_idents),*) }
+                };
                 quote! {
-                    #[same_as(#satellite_table_crate::#satellite_table_ident::#referenced_column_ident, #key_ident)]
+                    #[same_as(#satellite_table_crate::#satellite_table_ident::#referenced_column_ident, #keys)]
                 }
             })
             .collect())

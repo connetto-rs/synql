@@ -1,11 +1,10 @@
 //! Submodule implementing the writing of the crate library files.
 
-use std::io::Write;
-
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use sql_relations::prelude::{ColumnLike, TableLike};
 
+use super::write_rust_file;
 use crate::{
     structs::{SynQL, Workspace},
     traits::{SynQLDatabaseLike, column::ColumnSynLike, table::TableSynLike},
@@ -22,9 +21,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         let crate_path = tables[0].crate_absolute_path(workspace);
         let src_path = crate_path.join("src");
         std::fs::create_dir_all(&src_path)?;
-        // We create the `lib.rs` file
         let lib_rs_path = src_path.join("lib.rs");
-        let mut buffer = std::fs::File::create(lib_rs_path)?;
 
         let allow_non_snake_case = tables
             .iter()
@@ -60,10 +57,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             #self_alias
             #(#table_items)*
         };
-
-        write!(buffer, "{content}")?;
-
-        Ok(())
+        write_rust_file(&lib_rs_path, content)
     }
 
     /// Wraps the `items` of `table` in a public module, named after the

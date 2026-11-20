@@ -4,6 +4,7 @@
 use quote::quote;
 use sql_traits::traits::UserDefinedTypeLike;
 
+use super::write_rust_file;
 use crate::{
     structs::{SynQL, Workspace},
     traits::{SynQLDatabaseLike, UserDefinedTypeSynLike},
@@ -70,7 +71,6 @@ workspace = true
 
             #enum_tokens
         };
-        std::fs::write(src_path.join("lib.rs"), content.to_string())?;
-        Ok(())
+        write_rust_file(&src_path.join("lib.rs"), content)
     }
 }

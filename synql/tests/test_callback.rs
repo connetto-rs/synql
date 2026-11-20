@@ -113,3 +113,17 @@ fn sink_callbacks_extend_only_the_sink_crate() -> Result<(), Box<dyn std::error:
 
     Ok(())
 }
+
+#[test]
+fn a_callback_returning_statements_is_refused() {
+    let db = ParserDB::parse::<GenericDialect>("CREATE TABLE users (id INT PRIMARY KEY);")
+        .expect("Unable to parse the schema");
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let synql: SynQL<ParserDB> = SynQL::new(&db, temp_dir.path())
+        .callback(|_table, _db, _workspace| Ok(Some(quote! { let answer = 42; })))
+        .into();
+    match synql.generate() {
+        Err(Error::UnparsableCode { path, .. }) => assert!(path.ends_with("src/lib.rs")),
+        other => panic!("Expected unparsable code, got {other:?}"),
+    }
+}

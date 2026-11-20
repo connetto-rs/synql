@@ -45,6 +45,22 @@ pub type SinkCallback<'db, T, D> =
 pub type SinkTomlCallback<'db, D> =
     Box<dyn Fn(&D) -> Result<Option<TomlDependency>, crate::Error> + 'db>;
 
+/// Writes `content` to the Rust file at `path`, laid out by `prettyplease`
+/// so that the file reads as written and every statement sits on its own
+/// line, whether or not `cargo fmt` runs over it.
+///
+/// # Errors
+///
+/// Returns [`Error::UnparsableCode`](crate::Error::UnparsableCode) when
+/// `content` does not parse as a Rust file, and
+/// [`Error::IO`](crate::Error::IO) when the file cannot be written.
+fn write_rust_file(path: &Path, content: TokenStream) -> Result<(), crate::Error> {
+    let file = syn::parse2::<syn::File>(content)
+        .map_err(|source| crate::Error::UnparsableCode { path: path.to_path_buf(), source })?;
+    std::fs::write(path, prettyplease::unparse(&file))?;
+    Ok(())
+}
+
 /// Struct representing a SQL workspace.
 pub struct SynQL<'db, DB: SynQLDatabaseLike> {
     /// The underlying database which will be used to generate the workspace.
