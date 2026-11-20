@@ -320,14 +320,23 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
                 continue;
             }
             for column in table.columns(self.database)? {
-                if column.data_type(self.database).scalar_family(self.database)
-                    == Some(ScalarFamily::Timestamp)
-                {
-                    return Err(crate::Error::TimestampWithoutTimeZone {
-                        table_name: table.table_name().to_string(),
-                        column_name: column.column_name().to_string(),
-                    });
-                }
+                let data_type = column.data_type(self.database);
+                let refusal: fn(String, String) -> crate::Error =
+                    if data_type.scalar_family(self.database) == Some(ScalarFamily::Timestamp) {
+                        |table_name, column_name| {
+                            crate::Error::TimestampWithoutTimeZone { table_name, column_name }
+                        }
+                    } else if data_type.normalized_name(self.database) == "TIME WITH TIME ZONE" {
+                        |table_name, column_name| {
+                            crate::Error::TimeWithTimeZone { table_name, column_name }
+                        }
+                    } else {
+                        continue;
+                    };
+                return Err(refusal(
+                    table.table_name().to_string(),
+                    column.column_name().to_string(),
+                ));
             }
             let number_of_columns = table.number_of_columns(self.database)?;
             let mut number_of_columns_in_hierarchy = number_of_columns;

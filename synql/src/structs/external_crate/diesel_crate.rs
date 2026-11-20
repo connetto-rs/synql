@@ -62,23 +62,11 @@ impl ExternalCrate {
             .unwrap()
             .git("https://github.com/diesel-rs/diesel", "main")
             .unwrap()
-            .types([
-                ExternalType::new(
-                    syn::parse_quote!(::diesel::sql_types::Interval),
-                    syn::parse_quote!(::diesel::pg::data_types::PgInterval),
-                )
-                .postgres_type("interval")
-                .unwrap()
-                .supports_debug()
-                .supports_copy()
-                .supports_eq()
-                .into(),
-                ExternalType::new(
-                    syn::parse_quote!(::diesel::result::Error),
-                    syn::parse_quote!(::diesel::result::Error),
-                )
-                .into(),
-            ])
+            .types([ExternalType::new(
+                syn::parse_quote!(::diesel::result::Error),
+                syn::parse_quote!(::diesel::result::Error),
+            )
+            .into()])
             .unwrap()
             .into()
     }

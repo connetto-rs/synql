@@ -49,6 +49,17 @@ pub enum Error {
         /// Name of the generated column.
         column_name: String,
     },
+    #[error(
+        "Column `{column_name}` in table `{table_name}` is a TIME WITH TIME ZONE, an offset without a date that cannot follow daylight saving. Declare it TIME or TIMESTAMPTZ"
+    )]
+    /// A column of type `TIME WITH TIME ZONE`, which synql refuses because
+    /// its offset, lacking a date, cannot follow daylight saving.
+    TimeWithTimeZone {
+        /// Name of the table of the column.
+        table_name: String,
+        /// Name of the column.
+        column_name: String,
+    },
     #[error("The {first} and the {second} would both generate the Rust crate `{crate_ident}`")]
     /// Two generated crates whose names fold to the same Rust crate name, as
     /// the crates of the enum types `"Mood"` and `mood`, or of the enum type

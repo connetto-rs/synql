@@ -21,7 +21,6 @@ impl ExternalCrate {
                 ExternalType::ip_addr(),
                 ExternalType::mac_addr(),
                 ExternalType::vec_string(),
-                ExternalType::system_time(),
             ])
             .unwrap()
             .into()
@@ -227,30 +226,6 @@ impl ExternalType {
         .supports_debug()
         .supports_clone()
         .supports_default()
-        .supports_hash()
-        .supports_ord()
-        .into()
-    }
-
-    /// Returns an `ExternalType` instance describing the
-    /// `std::time::SystemTime` type from the `std` crate.
-    fn system_time() -> Self {
-        ExternalType::new(
-            syn::parse_quote!(diesel::sql_types::Timestamp),
-            syn::parse_quote!(std::time::SystemTime),
-        )
-        .postgres_types([
-            "timestamp",
-            "time_stamp",
-            "timestamp with time zone",
-            "timestamptz",
-            "date",
-            "time",
-            "time with time zone",
-        ])
-        .unwrap()
-        .supports_debug()
-        .supports_clone()
         .supports_hash()
         .supports_ord()
         .into()
