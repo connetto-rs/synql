@@ -249,3 +249,41 @@ fn now_shifts_need_intervals_of_fixed_length() {
         assert!(matches!(reason(interval), UnsupportedCheck::Interval(_)), "{interval}");
     }
 }
+
+#[test]
+fn float_casts_need_a_float_their_type_can_read() {
+    let reason = |column_type: &str, literal: &str| {
+        unsupported_reason(&format!(
+            "CREATE TABLE t (id INT PRIMARY KEY, a {column_type}, CHECK (a < {literal}));"
+        ))
+    };
+    for (column_type, literal) in [
+        ("DOUBLE PRECISION", "'abc'::double precision"),
+        ("DOUBLE PRECISION", "'1e400'::double precision"),
+        ("DOUBLE PRECISION", "'-1e400'::float8"),
+        ("REAL", "'1e39'::real"),
+    ] {
+        let quoted = literal.split("::").next().expect("A quoted literal");
+        assert!(
+            matches!(
+                reason(column_type, literal),
+                UnsupportedCheck::MixedTypes { right, .. } if right == quoted
+            ),
+            "{literal}"
+        );
+    }
+    assert!(matches!(
+        reason("DOUBLE PRECISION", "'Infinity'::real"),
+        UnsupportedCheck::MixedTypes { left, right } if left == "f64" && right == "f32"
+    ));
+    for literal in ["'NaN'::double precision", "' -nan '::float8", "'nan'::real"] {
+        let quoted = literal.split("::").next().expect("A quoted literal");
+        assert!(
+            matches!(
+                reason("DOUBLE PRECISION", literal),
+                UnsupportedCheck::NotANumber(nan) if nan == quoted
+            ),
+            "{literal}"
+        );
+    }
+}

@@ -168,14 +168,8 @@ impl ExternalType {
                 let casted: isize = value.parse().map_err(|_| mk_err())?;
                 quote! { #casted }
             }
-            "f32" => {
-                let casted: f32 = value.parse().map_err(|_| mk_err())?;
-                quote! { #casted }
-            }
-            "f64" => {
-                let casted: f64 = value.parse().map_err(|_| mk_err())?;
-                quote! { #casted }
-            }
+            "f32" => float_tokens::<f32>(value, &self.rust_type).ok_or_else(mk_err)?,
+            "f64" => float_tokens::<f64>(value, &self.rust_type).ok_or_else(mk_err)?,
             "u128" => {
                 let casted: u128 = value.parse().map_err(|_| mk_err())?;
                 quote! { #casted }
@@ -188,6 +182,13 @@ impl ExternalType {
                 return Err(mk_err());
             }
         })
+    }
+
+    /// Returns whether the type is a Rust float and the value is PostgreSQL's
+    /// spelling of NaN for it.
+    pub(crate) fn is_nan_literal(&self, value: &str) -> bool {
+        matches!(self.rust_type.to_token_stream().to_string().as_str(), "f32" | "f64")
+            && matches!(FloatInput::read(value), FloatInput::NotANumber)
     }
 
     /// Returns true if the `ExternalType` is of boolean type.
@@ -214,4 +215,57 @@ impl ExternalType {
                 | "f64"
         )
     }
+}
+
+/// A float literal as PostgreSQL's float input reads it.
+enum FloatInput<'text> {
+    /// A number, without the whitespace PostgreSQL ignores around it.
+    Number(&'text str),
+    /// `Infinity`, `inf` or either with a `+` sign, in any case.
+    Infinity,
+    /// `-Infinity` or `-inf`, in any case.
+    NegativeInfinity,
+    /// `NaN`, in any case and with either sign.
+    NotANumber,
+}
+
+impl<'text> FloatInput<'text> {
+    /// Reads the text as PostgreSQL's float input does.
+    fn read(text: &'text str) -> Self {
+        let text = text.trim_matches(|character| {
+            matches!(character, ' ' | '\t' | '\n' | '\r' | '\u{b}' | '\u{c}')
+        });
+        let (negative, unsigned) = match text.strip_prefix('-') {
+            Some(unsigned) => (true, unsigned),
+            None => (false, text.strip_prefix('+').unwrap_or(text)),
+        };
+        if unsigned.eq_ignore_ascii_case("infinity") || unsigned.eq_ignore_ascii_case("inf") {
+            if negative { Self::NegativeInfinity } else { Self::Infinity }
+        } else if unsigned.eq_ignore_ascii_case("nan") {
+            Self::NotANumber
+        } else {
+            Self::Number(text)
+        }
+    }
+}
+
+/// Returns the tokens of the value read as a PostgreSQL float of the Rust
+/// float type `F`, spelled `rust_type`, or `None` when the value is not a
+/// number `F` holds.
+fn float_tokens<F>(value: &str, rust_type: &syn::Type) -> Option<proc_macro2::TokenStream>
+where
+    F: core::str::FromStr + ToTokens + Into<f64> + Copy,
+{
+    Some(match FloatInput::read(value) {
+        FloatInput::Infinity => quote! { #rust_type::INFINITY },
+        FloatInput::NegativeInfinity => quote! { #rust_type::NEG_INFINITY },
+        FloatInput::NotANumber => quote! { #rust_type::NAN },
+        FloatInput::Number(number) => {
+            let number: F = number.parse().ok()?;
+            if !number.into().is_finite() {
+                return None;
+            }
+            quote! { #number }
+        }
+    })
 }

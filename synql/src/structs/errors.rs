@@ -155,4 +155,8 @@ pub enum UnsupportedCheck {
     /// whose spelling the translator does not read as PostgreSQL does.
     #[error("interval `{0}`")]
     Interval(String),
+    /// A NaN literal, which PostgreSQL orders above every other float and
+    /// equal to itself while Rust leaves it unordered.
+    #[error("NaN literal `{0}`")]
+    NotANumber(String),
 }

@@ -168,6 +168,12 @@ CREATE TABLE blinks (
     millis TIMESTAMPTZ NOT NULL CHECK (millis <= now() + INTERVAL '1750 ms'),
     micros TIMESTAMPTZ NOT NULL CHECK (micros <= now() + INTERVAL '1 s 750000 us')
 );
+CREATE TABLE readings (
+    id INT PRIMARY KEY,
+    volume DOUBLE PRECISION CHECK (volume >= 0.0 AND volume < 'Infinity'::double precision),
+    depth DOUBLE PRECISION NOT NULL CHECK ('-inf'::FLOAT8 < depth) CHECK (depth <= ' 1.5e3 '::float8),
+    ratio REAL NOT NULL CHECK (ratio < '+INFINITY'::real)
+);
 ";
 
 const CHECKS_MANIFEST: &str = r#"[package]
@@ -255,6 +261,7 @@ synql-check-translation-tiers.workspace = true
 synql-check-translation-stamps.workspace = true
 synql-check-translation-leases.workspace = true
 synql-check-translation-blinks.workspace = true
+synql-check-translation-readings.workspace = true
 rosetta-utc.workspace = true
 "#;
 
@@ -634,6 +641,30 @@ fn now_shifts_subtract_commute_and_follow_three_valued_logic() {
     assert!(validate(240, None).is_ok());
     assert!(validate(360, Some(0)).is_ok());
     assert!(is_check_violation(validate(360, None)));
+}
+
+#[test]
+fn float_casts_read_infinities_and_numeric_strings() {
+    use synql_check_translation_readings::readings;
+    type Readings = <readings::table as TableExt>::NewValues;
+    let volume =
+        |volume: f64| <Readings as ValidateColumn<readings::volume>>::validate_column(&volume);
+    assert!(volume(0.0).is_ok());
+    assert!(volume(f64::MAX).is_ok());
+    assert!(volume(-1.0).is_err());
+    assert!(is_check_violation(volume(f64::INFINITY)));
+    assert!(is_check_violation(volume(f64::NAN)));
+
+    let depth = |depth: f64| <Readings as ValidateColumn<readings::depth>>::validate_column(&depth);
+    assert!(depth(f64::MIN).is_ok());
+    assert!(depth(1_500.0).is_ok());
+    assert!(is_check_violation(depth(f64::NEG_INFINITY)));
+    assert!(is_check_violation(depth(1_500.5)));
+
+    let ratio = |ratio: f32| <Readings as ValidateColumn<readings::ratio>>::validate_column(&ratio);
+    assert!(ratio(f32::MAX).is_ok());
+    assert!(is_check_violation(ratio(f32::INFINITY)));
+    assert!(is_check_violation(ratio(f32::NAN)));
 }
 "#;
 
