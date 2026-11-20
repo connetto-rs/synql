@@ -128,6 +128,12 @@ impl<'workspace> ExternalTypeRef<'workspace> {
         self.type_ref.cast(value)
     }
 
+    /// Returns whether the type is a Rust float and the value is PostgreSQL's
+    /// spelling of NaN for it.
+    pub(crate) fn is_nan_literal(&self, value: &str) -> bool {
+        self.type_ref.is_nan_literal(value)
+    }
+
     /// Returns true if the `ExternalTypeRef` is of boolean type.
     #[must_use]
     pub fn is_bool(&self) -> bool {

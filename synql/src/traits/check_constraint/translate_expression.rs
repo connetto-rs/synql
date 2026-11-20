@@ -12,6 +12,7 @@ use sql_traits::{
     errors::{LookupError, ObjectKind},
     structs::IdentifierCase,
     traits::{CheckConstraintLike, ColumnLike, DataTypeLike, DatabaseLike, TableLike},
+    utils::normalize_postgres_type,
 };
 use sqlparser::ast::{
     BinaryOperator, CastKind, DataType, Expr, Function, FunctionArg, FunctionArgExpr,
@@ -625,19 +626,51 @@ where
             }
             Value::SingleQuotedString(string) => {
                 match type_hint.filter(ExternalTypeRef::is_enum) {
-                    Some(ty) => {
-                        let tokens = ty.cast(string).map_err(|_| {
-                            self.unsupported(UnsupportedCheck::MixedTypes {
-                                left: type_name(ty),
-                                right: value.to_string(),
-                            })
-                        })?;
-                        Ok((tokens, ty))
-                    }
+                    Some(ty) => Ok((self.typed_string(value, string, ty)?, ty)),
                     None => Ok((quote! { #string }, self.workspace.string())),
                 }
             }
             other => Err(self.unsupported(UnsupportedCheck::Expression(other.to_string()))),
+        }
+    }
+
+    /// Translates the text of the quoted literal into a Rust value of the
+    /// type, refusing a NaN that the type would hold.
+    fn typed_string(
+        &self,
+        value: &Value,
+        string: &str,
+        ty: ExternalTypeRef<'workspace>,
+    ) -> Result<TokenStream, Error> {
+        if ty.is_nan_literal(string) {
+            return Err(self.unsupported(UnsupportedCheck::NotANumber(value.to_string())));
+        }
+        ty.cast(string).map_err(|_| {
+            self.unsupported(UnsupportedCheck::MixedTypes {
+                left: type_name(ty),
+                right: value.to_string(),
+            })
+        })
+    }
+
+    /// Returns the Rust type of the SQL type a value is cast to.
+    fn cast_type(&self, data_type: &DataType) -> Option<ExternalTypeRef<'workspace>> {
+        self.workspace.external_postgres_type(&normalize_postgres_type(&data_type.to_string()))
+    }
+
+    /// Returns the operand of a literal translated into the tokens of a
+    /// value of the type.
+    fn literal_operand(
+        tokens: TokenStream,
+        ty: ExternalTypeRef<'workspace>,
+    ) -> Operand<'workspace, 'db, DB> {
+        Operand {
+            tokens,
+            binding: Binding::Postfix,
+            nullable: false,
+            by_reference: ty.is_string(),
+            ty,
+            columns: Vec::new(),
         }
     }
 
@@ -813,23 +846,24 @@ where
     ) -> Result<Operand<'workspace, 'db, DB>, Error> {
         match expr {
             Expr::Nested(inner) => self.operand(inner, type_hint),
-            Expr::Cast { kind, expr: inner, format: None, .. }
+            Expr::Cast { kind, expr: inner, data_type, format: None, .. }
                 if *kind == CastKind::DoubleColon =>
             {
+                if let Expr::Value(ValueWithSpan {
+                    value: value @ Value::SingleQuotedString(string),
+                    ..
+                }) = strip_nesting(inner)
+                    && let Some(ty) = self.cast_type(data_type)
+                {
+                    return Ok(Self::literal_operand(self.typed_string(value, string, ty)?, ty));
+                }
                 self.operand(inner, type_hint)
             }
             Expr::Cast { .. } => Err(self.unsupported(UnsupportedCheck::Cast(expr.to_string()))),
             Expr::Identifier(ident) => self.column_operand(self.column(&ident.value)?),
             Expr::Value(ValueWithSpan { value, .. }) => {
                 let (tokens, ty) = self.parse_value(value, type_hint)?;
-                Ok(Operand {
-                    tokens,
-                    binding: Binding::Postfix,
-                    nullable: false,
-                    by_reference: ty.is_string(),
-                    ty,
-                    columns: Vec::new(),
-                })
+                Ok(Self::literal_operand(tokens, ty))
             }
             Expr::IsNull(inner) => self.null_test(inner, true),
             Expr::IsNotNull(inner) => self.null_test(inner, false),
