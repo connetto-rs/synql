@@ -18,7 +18,8 @@ CREATE TABLE stamps (
     shouted TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     transaction TIMESTAMPTZ NOT NULL DEFAULT transaction_timestamp(),
     keyword TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    lowercase_keyword TIMESTAMPTZ NOT NULL DEFAULT current_timestamp
+    lowercase_keyword TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    parenthesised TIMESTAMPTZ NOT NULL DEFAULT ((now()))
 );
 ";
 
@@ -65,6 +66,7 @@ fn every_spelling_of_the_current_time_fills_its_column() {
     assert_between(MayGetColumn::<stamps::transaction>::may_get_column(&builder), before, after, "transaction");
     assert_between(MayGetColumn::<stamps::keyword>::may_get_column(&builder), before, after, "keyword");
     assert_between(MayGetColumn::<stamps::lowercase_keyword>::may_get_column(&builder), before, after, "lowercase_keyword");
+    assert_between(MayGetColumn::<stamps::parenthesised>::may_get_column(&builder), before, after, "parenthesised");
 }
 "#;
 
