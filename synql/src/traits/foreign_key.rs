@@ -4,7 +4,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use sql_traits::{
     errors::LookupError,
-    traits::{ForeignKeyLike, IndexLike},
+    traits::{ForeignKeyLike, TableIndexLike},
 };
 
 use crate::{
