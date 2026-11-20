@@ -242,6 +242,7 @@ fn now_shifts_need_intervals_of_fixed_length() {
         "INTERVAL '00:60'",
         "INTERVAL '00:05:00.1234567'",
         "INTERVAL '1000000000 hours'",
+        "INTERVAL '43800001 hours'",
         "INTERVAL '-1 hour 30 minutes'",
         "INTERVAL '-5min 3 s'",
     ] {

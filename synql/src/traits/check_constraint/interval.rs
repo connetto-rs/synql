@@ -25,10 +25,10 @@ const MINUTE: i128 = 60 * SECOND;
 /// Microseconds in an hour.
 const HOUR: i128 = 60 * MINUTE;
 
-/// Microseconds of the longest interval read, a hundred thousand years, so
-/// that shifting the current time by it stays within the years `chrono`
-/// represents.
-const LONGEST: i128 = 100_000 * 366 * 24 * HOUR;
+/// Microseconds of the longest interval read, five thousand 365-day years, so
+/// that shifting a current time before the year 5000 by it stays within the
+/// years -9999 to 9999 that `jiff::Timestamp` represents.
+const LONGEST: i128 = 5_000 * 365 * 24 * HOUR;
 
 /// Returns the microseconds of the interval text, or `None` when the interval
 /// has no fixed length or its spelling is not one the reader accepts.

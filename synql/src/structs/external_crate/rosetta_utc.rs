@@ -11,7 +11,7 @@ impl ExternalCrate {
     pub fn rosetta_utc() -> ExternalCrate {
         ExternalCrate::new("rosetta-utc")
             .unwrap()
-            .version("0.1.0")
+            .version("0.2.0")
             .unwrap()
             .features(["diesel", "serde", "sqlite"])
             .types([ExternalType::new(
