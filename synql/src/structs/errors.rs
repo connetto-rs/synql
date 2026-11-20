@@ -27,6 +27,17 @@ pub enum Error {
         /// SQL expression of the default.
         default: String,
     },
+    #[error(
+        "Column `{column_name}` in table `{table_name}` is a TIMESTAMP without time zone, which names no instant. Declare it TIMESTAMPTZ"
+    )]
+    /// A column of type `TIMESTAMP` without time zone, which synql refuses
+    /// because it holds a wall clock reading of an unknown time zone.
+    TimestampWithoutTimeZone {
+        /// Name of the table of the column.
+        table_name: String,
+        /// Name of the column.
+        column_name: String,
+    },
     #[error("The {first} and the {second} would both generate the Rust crate `{crate_ident}`")]
     /// Two generated crates whose names fold to the same Rust crate name, as
     /// the crates of the enum types `"Mood"` and `mood`, or of the enum type

@@ -14,6 +14,10 @@ mod write_sink_crate_lib;
 mod write_sink_crate_toml;
 pub use builder::SynQLBuilder;
 use sql_relations::prelude::TableLike;
+use sql_traits::{
+    traits::{ColumnLike, DataTypeLike},
+    utils::scalar_family::ScalarFamily,
+};
 use time_requirements::{prelude::TimeTracker, task::Task};
 
 use crate::{
@@ -305,14 +309,25 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the workspace cannot be written to disk or if the
-    /// schema cannot be resolved.
+    /// Returns an error if the workspace cannot be written to disk, if the
+    /// schema cannot be resolved, or if a column is a `TIMESTAMP` without
+    /// time zone.
     pub fn generate(&self) -> Result<TimeTracker, crate::Error> {
         let mut maximum_number_of_columns = 0;
         let mut maximum_number_of_columns_in_hierarchy = 0;
         for table in self.database.tables() {
             if self.skip_table(table)? {
                 continue;
+            }
+            for column in table.columns(self.database)? {
+                if column.data_type(self.database).scalar_family(self.database)
+                    == Some(ScalarFamily::Timestamp)
+                {
+                    return Err(crate::Error::TimestampWithoutTimeZone {
+                        table_name: table.table_name().to_string(),
+                        column_name: column.column_name().to_string(),
+                    });
+                }
             }
             let number_of_columns = table.number_of_columns(self.database)?;
             let mut number_of_columns_in_hierarchy = number_of_columns;
@@ -340,7 +355,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             .expect("Invalid workspace name")
             .external_crates(self.external_crates.iter().cloned())
             .rosetta_utc()
-            .chrono()
+            .rosetta_time()
             .core()
             .std()
             .pgrx_validation()

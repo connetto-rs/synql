@@ -138,10 +138,10 @@ impl WorkspaceBuilder {
         self.external_crate(ExternalCrate::std())
     }
 
-    /// Adds the `chrono` external crate to the workspace.
+    /// Adds the `rosetta_time` external crate to the workspace.
     #[must_use]
-    pub fn chrono(self) -> Self {
-        self.external_crate(ExternalCrate::chrono())
+    pub fn rosetta_time(self) -> Self {
+        self.external_crate(ExternalCrate::rosetta_time())
     }
 
     /// Adds the `serde` external crate to the workspace.

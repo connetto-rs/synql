@@ -14,7 +14,7 @@ CREATE TABLE probes (
     id UUID PRIMARY KEY,
     kind message_kind NOT NULL,
     payload JSONB NOT NULL,
-    sent_at TIMESTAMP NOT NULL,
+    opens_at TIME NOT NULL,
     received_at TIMESTAMPTZ,
     sent_on DATE,
     delay INTERVAL

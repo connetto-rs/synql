@@ -1,6 +1,8 @@
 //! A timestamp column defaulting to the current time, spelled `now()`,
 //! `transaction_timestamp()` or `CURRENT_TIMESTAMP` in any case, gets the
-//! current time from the builder.
+//! current time from the builder, a date column defaulting to `CURRENT_DATE`
+//! gets the current UTC date, and a time column defaulting to `LOCALTIME` gets
+//! the current UTC time of day.
 //!
 //! The test generates a workspace, adds a crate of assertions over the
 //! generated builders, and runs the assertions with `cargo test`.
@@ -21,6 +23,12 @@ CREATE TABLE stamps (
     lowercase_keyword TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
     parenthesised TIMESTAMPTZ NOT NULL DEFAULT ((now()))
 );
+CREATE TABLE openings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    day DATE NOT NULL DEFAULT CURRENT_DATE,
+    opens TIME NOT NULL DEFAULT LOCALTIME,
+    lasts INTERVAL NOT NULL
+);
 ";
 
 const ASSERTIONS_MANIFEST: &str = r#"[package]
@@ -33,13 +41,18 @@ diesel-builders.workspace = true
 rosetta-utc.workspace = true
 synql-current-time-events.workspace = true
 synql-current-time-stamps.workspace = true
+synql-current-time-openings.workspace = true
+rosetta-time.workspace = true
+jiff = "1"
 "#;
 
 const ASSERTIONS_TEST: &str = r#"//! Assertions over the generated current time defaults.
 
 use diesel_builders::{BuildableTable, MayGetColumn};
+use rosetta_time::{Date, Time};
 use rosetta_utc::TimestampUTC;
 use synql_current_time_events::events;
+use synql_current_time_openings::openings;
 use synql_current_time_stamps::stamps;
 
 /// Asserts that the builder filled the column with a time between the two
@@ -67,6 +80,19 @@ fn every_spelling_of_the_current_time_fills_its_column() {
     assert_between(MayGetColumn::<stamps::keyword>::may_get_column(&builder), before, after, "keyword");
     assert_between(MayGetColumn::<stamps::lowercase_keyword>::may_get_column(&builder), before, after, "lowercase_keyword");
     assert_between(MayGetColumn::<stamps::parenthesised>::may_get_column(&builder), before, after, "parenthesised");
+}
+
+#[test]
+fn the_current_date_and_time_of_day_fill_their_columns() {
+    let before = TimestampUTC::now();
+    let builder = openings::table::builder();
+    let after = TimestampUTC::now();
+    let day: Date = MayGetColumn::<openings::day>::may_get_column(&builder).expect("The builder leaves `day` unset");
+    let opens: Time = MayGetColumn::<openings::opens>::may_get_column(&builder).expect("The builder leaves `opens` unset");
+    let utc = |timestamp: TimestampUTC| jiff::tz::Offset::UTC.to_datetime(*timestamp);
+    let (before, after) = (utc(before), utc(after));
+    let filled = day.to_datetime(*opens);
+    assert!(before <= filled && filled <= after, "`day` and `opens` are {filled}, outside {before} and {after}");
 }
 "#;
 
