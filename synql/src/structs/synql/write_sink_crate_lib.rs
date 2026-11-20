@@ -1,10 +1,11 @@
 //! Submodule implementing the writing of the sink crate library files.
 
-use std::{collections::HashSet, io::Write, path::Path};
+use std::{collections::HashSet, path::Path};
 
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use super::write_rust_file;
 use crate::{
     structs::{SynQL, Workspace},
     traits::{SynQLDatabaseLike, table::TableSynLike},
@@ -23,9 +24,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         // We create the `src` directory if it does not exist
         let src_path = sink_crate_path.join("src");
         std::fs::create_dir_all(&src_path)?;
-        // We create the `lib.rs` file
         let lib_rs_path = src_path.join("lib.rs");
-        let mut buffer = std::fs::File::create(lib_rs_path)?;
 
         let crate_documentation = format!(
             "Auto-generated sink crate `{sink_crate_name}` which re-exports all table crates."
@@ -53,9 +52,6 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
 
             #(#items)*
         };
-
-        write!(buffer, "{content}")?;
-
-        Ok(())
+        write_rust_file(&lib_rs_path, content)
     }
 }

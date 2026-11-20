@@ -15,6 +15,7 @@ sql-traits.workspace = true
 geometric-traits.workspace = true
 sql_relations.workspace = true
 syn.workspace = true
+prettyplease.workspace = true
 time_requirements.workspace = true
 sqlparser.workspace = true
 proc-macro2.workspace = true

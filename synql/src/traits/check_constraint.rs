@@ -11,7 +11,7 @@ mod interval;
 mod like_pattern;
 mod sub_expressions;
 mod translate_expression;
-use translate_expression::TranslateExpression;
+use translate_expression::{Check, TranslateExpression};
 
 use crate::{
     structs::Workspace,
@@ -53,35 +53,49 @@ pub trait CheckConstraintSynLike: CheckConstraintLike {
         let translator: TranslateExpression<'_, 'db, <Self as CheckConstraintLike>::DB> =
             TranslateExpression::new(self.borrow(), workspace, contextual_columns, database);
 
-        let mut translated_expressions: Vec<TokenStream> = Vec::new();
-
-        for sub_expression in sub_expressions::sub_expressions(self.expression(database)) {
-            translated_expressions.push(translator.parse(sub_expression)?);
-        }
+        let checks = sub_expressions::sub_expressions(self.expression(database))
+            .into_iter()
+            .map(|sub_expression| translator.parse(sub_expression))
+            .collect::<Result<Vec<Check>, _>>()?;
 
         let relevant_optional_columns = self
             .columns(database)?
             .filter(|column| !contextual_columns.iter().any(|c| c == column))
             .collect::<Vec<_>>();
+        if relevant_optional_columns.is_empty() {
+            return Ok(quote! { #(#checks)* });
+        }
 
-        Ok(if relevant_optional_columns.is_empty() {
-            translated_expressions.into_iter().collect()
+        let column_idents = relevant_optional_columns
+            .iter()
+            .map(ColumnSynLike::column_snake_ident)
+            .collect::<Vec<_>>();
+        let table_ident = self.table(database)?.table_snake_ident();
+        let (pattern, values) = if let [column_ident] = column_idents.as_slice() {
+            (
+                quote! { Some(#column_ident) },
+                quote! { <Self as diesel_builders::MayGetColumn<#table_ident::#column_ident>>::may_get_column_ref(self) },
+            )
         } else {
-            let column_idents = relevant_optional_columns
-                .iter()
-                .map(ColumnSynLike::column_snake_ident)
-                .collect::<Vec<_>>();
-            let table_ident = self.table(database)?.table_snake_ident();
-            if column_idents.len() == 1 {
+            (
+                quote! { (#(Some(#column_idents)),*) },
+                quote! { (#(<Self as diesel_builders::MayGetColumn<#table_ident::#column_idents>>::may_get_column_ref(self)),*) },
+            )
+        };
+        Ok(match checks.as_slice() {
+            // From the 2024 edition on, a single condition joins the pattern
+            // in a let chain rather than nesting in its block.
+            [Check::Guard { violated, error }] if workspace.edition() >= 2024 => {
                 quote! {
-                    if let #(Some(#column_idents)),* = #(<Self as diesel_builders::MayGetColumn<#table_ident::#column_idents>>::may_get_column_ref(self)),* {
-                        #( #translated_expressions )*
+                    if let #pattern = #values && #violated {
+                        return Err(#error);
                     }
                 }
-            } else {
+            }
+            _ => {
                 quote! {
-                    if let (#(Some(#column_idents)),*) = (#(<Self as diesel_builders::MayGetColumn<#table_ident::#column_idents>>::may_get_column_ref(self)),*) {
-                        #( #translated_expressions )*
+                    if let #pattern = #values {
+                        #(#checks)*
                     }
                 }
             }

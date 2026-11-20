@@ -20,8 +20,8 @@ fn disposals_source(schema: &str) -> String {
     source.chars().filter(|character| !character.is_whitespace()).collect()
 }
 
-const FOUR_COLUMN_KEY: &str = "#[table_model(foreign_key((slot_id,id,model_id,role_id,),(::sameas_slots::slots::id,::sameas_slots::slots::template_id,::sameas_slots::slots::model_id,::sameas_slots::slots::role_id)))]";
-const THREE_COLUMN_KEY: &str = "#[table_model(foreign_key((slot_id,id,model_id,),(::sameas_slots::slots::id,::sameas_slots::slots::template_id,::sameas_slots::slots::model_id)))]";
+const FOUR_COLUMN_KEY: &str = "#[table_model(foreign_key((slot_id,id,model_id,role_id),(::sameas_slots::slots::id,::sameas_slots::slots::template_id,::sameas_slots::slots::model_id,::sameas_slots::slots::role_id)))]";
+const THREE_COLUMN_KEY: &str = "#[table_model(foreign_key((slot_id,id,model_id),(::sameas_slots::slots::id,::sameas_slots::slots::template_id,::sameas_slots::slots::model_id)))]";
 
 /// Generates a `disposals` table extending `templates` and tied to its slot
 /// by `foreign_keys`, and asserts the decorators of its columns and that its
@@ -140,7 +140,7 @@ CREATE TABLE disposals (
 );",
     );
 
-    let expected = "#[table_model(foreign_key((slot_id,model_id,role,),(::sameas_slots::slots::id,::sameas_slots::slots::model_id,::sameas_slots::slots::role)))]";
+    let expected = "#[table_model(foreign_key((slot_id,model_id,role),(::sameas_slots::slots::id,::sameas_slots::slots::model_id,::sameas_slots::slots::role)))]";
     assert!(source.contains(expected), "Expected `{expected}` in:\n{source}");
     assert!(!source.contains("same_as("), "Unexpected same-as decorator in:\n{source}");
 }

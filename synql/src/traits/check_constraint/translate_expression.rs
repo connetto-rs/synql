@@ -22,7 +22,7 @@ use sqlparser::ast::{
 use super::{interval::fixed_microseconds, like_pattern::LikePattern};
 use crate::{
     Error,
-    structs::{ExternalTypeRef, UnsupportedCheck, Workspace},
+    structs::{ExternalTypeRef, Trait, UnsupportedCheck, Workspace},
     traits::{column::ColumnSynLike, function::FunctionSynLike, table::TableSynLike},
 };
 
@@ -32,7 +32,7 @@ use crate::{
 enum Binding {
     /// A literal, path, call or method chain.
     Postfix,
-    /// A dereference.
+    /// A dereference or a negation.
     Prefix,
     /// A binary operation or a `match`.
     Loose,
@@ -49,6 +49,9 @@ struct Operand<'workspace, 'db, DB: DatabaseLike> {
     nullable: bool,
     /// Whether the expression evaluates to a reference.
     by_reference: bool,
+    /// The reference the expression dereferences, which borrows the value
+    /// without writing `&*`, for a column read by value.
+    borrowed: Option<TokenStream>,
     /// The Rust type of the value.
     ty: ExternalTypeRef<'workspace>,
     /// The columns the expression reads.
@@ -73,6 +76,24 @@ impl<DB: DatabaseLike> Operand<'_, '_, DB> {
             quote! { (#tokens) }
         } else {
             quote! { #tokens }
+        }
+    }
+
+    /// Returns the expression ready to have a method taking `&self` called
+    /// on it, without dereferencing a reference.
+    fn borrowed_receiver(&self) -> TokenStream {
+        self.borrowed.clone().unwrap_or_else(|| self.receiver())
+    }
+
+    /// Returns a reference to the value of the expression.
+    fn reference(&self) -> TokenStream {
+        if let Some(borrowed) = &self.borrowed {
+            borrowed.clone()
+        } else if self.by_reference {
+            self.tokens.clone()
+        } else {
+            let operand = self.operand();
+            quote! { &#operand }
         }
     }
 
@@ -103,6 +124,30 @@ impl<DB: DatabaseLike> Operand<'_, '_, DB> {
             "true" => Some(true),
             "false" => Some(false),
             _ => None,
+        }
+    }
+}
+
+/// A check constraint sub-expression translated into Rust.
+pub(super) enum Check {
+    /// Returns `error` when `violated` holds.
+    Guard {
+        /// The condition under which the row violates the check.
+        violated: TokenStream,
+        /// The error returned for the violation.
+        error: TokenStream,
+    },
+    /// A statement that returns the error itself.
+    Statement(TokenStream),
+}
+
+impl ToTokens for Check {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Check::Guard { violated, error } => {
+                tokens.extend(quote! { if #violated { return Err(#error); } });
+            }
+            Check::Statement(statement) => statement.to_tokens(tokens),
         }
     }
 }
@@ -252,6 +297,26 @@ fn comparison_operator(op: &BinaryOperator) -> Option<TokenStream> {
     })
 }
 
+/// Splits `=` or `<>` between an expression and a boolean literal into the
+/// expression and whether the comparison is TRUE when the expression is.
+fn boolean_literal_comparison<'expr>(
+    left: &'expr Expr,
+    op: &BinaryOperator,
+    right: &'expr Expr,
+) -> Option<(&'expr Expr, bool)> {
+    let equal = match op {
+        BinaryOperator::Eq => true,
+        BinaryOperator::NotEq => false,
+        _ => return None,
+    };
+    let (expr, literal) = match (strip_nesting(left), strip_nesting(right)) {
+        (_, Expr::Value(ValueWithSpan { value: Value::Boolean(literal), .. })) => (left, *literal),
+        (Expr::Value(ValueWithSpan { value: Value::Boolean(literal), .. }), _) => (right, *literal),
+        _ => return None,
+    };
+    Some((expr, literal == equal))
+}
+
 /// Returns the Rust arithmetic operator for the SQL arithmetic operator.
 fn arithmetic_operator(op: &BinaryOperator) -> Option<TokenStream> {
     Some(match op {
@@ -356,11 +421,11 @@ where
         })
     }
 
-    /// Translates the check constraint sub-expression into statements that
-    /// return an error when it evaluates to FALSE.
-    pub(super) fn parse(&self, expr: &Expr) -> Result<TokenStream, Error> {
-        if let Some(tokens) = self.map_expr_to_validation_error(expr)? {
-            return Ok(tokens);
+    /// Translates the check constraint sub-expression into the check that
+    /// returns an error when it evaluates to FALSE.
+    pub(super) fn parse(&self, expr: &Expr) -> Result<Check, Error> {
+        if let Some(check) = self.map_expr_to_validation_error(expr)? {
+            return Ok(check);
         }
         if let Expr::Function(function) = strip_nesting(expr) {
             return self.validation_call(function);
@@ -370,29 +435,97 @@ where
         if !operand.ty.is_bool() {
             return Err(self.unsupported(UnsupportedCheck::Expression(expr.to_string())));
         }
-        let tokens = operand.operand();
         let violated = if operand.nullable {
+            let tokens = operand.operand();
             quote! { #tokens == Some(false) }
         } else {
-            quote! { !#tokens }
+            self.violation(expr, &operand)?
         };
         let table_name = self.table_name()?;
         let fields = self.column_names(&operand.columns)?;
         let check = expr.to_string();
-        Ok(quote! {
-            if #violated {
-                return Err(::validation_errors::ValidationError::check_violated(
+        Ok(Check::Guard {
+            violated,
+            error: quote! {
+                ::validation_errors::ValidationError::check_violated(
                     #table_name,
                     &[#(#fields),*],
                     #check,
-                ));
-            }
+                )
+            },
         })
+    }
+
+    /// Returns the condition under which the boolean expression, which
+    /// cannot be NULL and translates to `operand`, is FALSE.
+    fn violation(
+        &self,
+        expr: &Expr,
+        operand: &Operand<'workspace, 'db, DB>,
+    ) -> Result<TokenStream, Error> {
+        if let Expr::BinaryOp { left, op, right } = strip_nesting(expr) {
+            if let Some((inner, holds_when_true)) = boolean_literal_comparison(left, op, right) {
+                let inner_operand = self.operand(inner, None)?;
+                if inner_operand.ty.is_bool() {
+                    return if holds_when_true {
+                        self.violation(inner, &inner_operand)
+                    } else {
+                        Ok(inner_operand.operand())
+                    };
+                }
+            }
+            if let Some(negation) = self.negated_comparison(left, op, right)? {
+                return Ok(negation);
+            }
+        }
+        let tokens = operand.operand();
+        Ok(quote! { !#tokens })
+    }
+
+    /// Translates the negation of a comparison that cannot be NULL, or
+    /// returns `None` when the operator is not a comparison.
+    ///
+    /// The negation of a comparison of totally ordered values is the
+    /// comparison with the opposite operator. Partially ordered values, as
+    /// floats with their NaN, can also be incomparable, which the comparison
+    /// rejects, so their negation reads the ordering from `partial_cmp`.
+    fn negated_comparison(
+        &self,
+        left: &Expr,
+        op: &BinaryOperator,
+        right: &Expr,
+    ) -> Result<Option<TokenStream>, Error> {
+        let (opposite, violated_ordering) = match op {
+            BinaryOperator::Eq => (quote! { != }, None),
+            BinaryOperator::NotEq => (quote! { == }, None),
+            BinaryOperator::Lt => (quote! { >= }, Some(quote! { is_ge })),
+            BinaryOperator::LtEq => (quote! { > }, Some(quote! { is_gt })),
+            BinaryOperator::Gt => (quote! { <= }, Some(quote! { is_le })),
+            BinaryOperator::GtEq => (quote! { < }, Some(quote! { is_lt })),
+            _ => return Ok(None),
+        };
+        let (left, right) = self.operand_pair(left, right, None)?;
+        Ok(Some(match violated_ordering {
+            Some(violated_ordering) if !left.ty.supports_trait(Trait::Ord) => {
+                let receiver = left.borrowed_receiver();
+                let reference = right.reference();
+                quote! {
+                    #receiver.partial_cmp(#reference).is_none_or(::core::cmp::Ordering::#violated_ordering)
+                }
+            }
+            _ => {
+                let left_tokens =
+                    comparable(&left.operand(), left.ty.is_string() && !left.by_reference);
+                let right_tokens =
+                    comparable(&right.operand(), right.ty.is_string() && !right.by_reference);
+                quote! { #left_tokens #opposite #right_tokens }
+            }
+        }))
     }
 
     /// Maps the expression to a dedicated validation error, when one exists
     /// for its shape.
-    fn map_expr_to_validation_error(&self, expr: &Expr) -> Result<Option<TokenStream>, Error> {
+    fn map_expr_to_validation_error(&self, expr: &Expr) -> Result<Option<Check>, Error> {
         let Expr::BinaryOp { left, right, op } = expr else {
             return Ok(None);
         };
@@ -435,7 +568,7 @@ where
         &self,
         ident: &str,
         op: &BinaryOperator,
-    ) -> Result<Option<TokenStream>, Error> {
+    ) -> Result<Option<Check>, Error> {
         let column = self.column(ident)?;
         if self.is_optional_column(column)? {
             return Ok(None);
@@ -448,13 +581,14 @@ where
         let column_ident = column.column_snake_ident();
         let table_ident = self.table()?.table_snake_ident();
         let table_name = self.table_name()?;
-        Ok(Some(quote! {
-            if *#column_ident #operator ::rosetta_utc::TimestampUTC::now() {
-                return Err(::validation_errors::ValidationError::in_the_future(
+        Ok(Some(Check::Guard {
+            violated: quote! { *#column_ident #operator ::rosetta_utc::TimestampUTC::now() },
+            error: quote! {
+                ::validation_errors::ValidationError::in_the_future(
                     #table_name,
                     crate::#table_ident::#column_ident::NAME,
-                ));
-            }
+                )
+            },
         }))
     }
 
@@ -464,7 +598,7 @@ where
         func: &Function,
         value: &Value,
         op: &BinaryOperator,
-    ) -> Result<Option<TokenStream>, Error> {
+    ) -> Result<Option<Check>, Error> {
         let [FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Identifier(ident)))] =
             call_arguments(func)
         else {
@@ -483,14 +617,15 @@ where
         let table_ident = self.table()?.table_snake_ident();
         let table_name = self.table_name()?;
         let max_length = self.parse_value(value, Some(self.workspace.usize()))?.0;
-        Ok(Some(quote! {
-            if #column_ident.chars().count() #violation #max_length {
-                return Err(::validation_errors::ValidationError::exceeds_max_length(
+        Ok(Some(Check::Guard {
+            violated: quote! { #column_ident.chars().count() #violation #max_length },
+            error: quote! {
+                ::validation_errors::ValidationError::exceeds_max_length(
                     #table_name,
                     crate::#table_ident::#column_ident::NAME,
                     #max_length
-                ));
-            }
+                )
+            },
         }))
     }
 
@@ -501,7 +636,7 @@ where
         left: &str,
         right: &str,
         op: &BinaryOperator,
-    ) -> Result<Option<TokenStream>, Error> {
+    ) -> Result<Option<Check>, Error> {
         let (violation, constructor) = match op {
             BinaryOperator::NotEq => (quote! { == }, quote! { equal }),
             BinaryOperator::LtEq => (quote! { > }, quote! { smaller_than }),
@@ -539,14 +674,15 @@ where
             }
             (false, false) => quote! { #left_ident #violation #right_ident },
         };
-        Ok(Some(quote! {
-            if #comparison {
-                return Err(::validation_errors::ValidationError::#constructor(
+        Ok(Some(Check::Guard {
+            violated: comparison,
+            error: quote! {
+                ::validation_errors::ValidationError::#constructor(
                     #table_name,
                     crate::#table_ident::#left_ident::NAME,
                     crate::#table_ident::#right_ident::NAME,
-                ));
-            }
+                )
+            },
         }))
     }
 
@@ -557,7 +693,7 @@ where
         ident: &str,
         value: &Value,
         op: &BinaryOperator,
-    ) -> Result<Option<TokenStream>, Error> {
+    ) -> Result<Option<Check>, Error> {
         let column = self.column(ident)?;
         if self.is_optional_column(column)? {
             return Ok(None);
@@ -571,13 +707,14 @@ where
             {
                 return Ok(None);
             }
-            return Ok(Some(quote! {
-                if #column_ident.is_empty() {
-                    return Err(::validation_errors::ValidationError::empty(
+            return Ok(Some(Check::Guard {
+                violated: quote! { #column_ident.is_empty() },
+                error: quote! {
+                    ::validation_errors::ValidationError::empty(
                         #table_name,
                         crate::#table_ident::#column_ident::NAME
-                    ));
-                }
+                    )
+                },
             }));
         }
         let column_type = self.column_type(column)?;
@@ -593,14 +730,15 @@ where
         };
         let column_value = self.parse_value(value, Some(column_type))?.0;
         let float_value = self.parse_value(value, Some(self.workspace.f64()))?.0;
-        Ok(Some(quote! {
-            if #column_ident #violation &#column_value {
-                return Err(::validation_errors::ValidationError::#constructor(
+        Ok(Some(Check::Guard {
+            violated: quote! { #column_ident #violation &#column_value },
+            error: quote! {
+                ::validation_errors::ValidationError::#constructor(
                     #table_name,
                     crate::#table_ident::#column_ident::NAME,
                     #float_value
-                ));
-            }
+                )
+            },
         }))
     }
 
@@ -669,6 +807,7 @@ where
             binding: Binding::Postfix,
             nullable: false,
             by_reference: ty.is_string(),
+            borrowed: None,
             ty,
             columns: Vec::new(),
         }
@@ -682,24 +821,24 @@ where
         let ty = self.column_type(column)?;
         let nullable = self.is_optional_column(column)?;
         let ident = column.column_snake_ident();
-        let (tokens, binding, by_reference) = if ty.is_string() {
+        let (tokens, binding, by_reference, borrowed) = if ty.is_string() {
             let tokens = if nullable {
                 quote! { #ident.as_deref() }
             } else {
                 quote! { #ident.as_str() }
             };
-            (tokens, Binding::Postfix, true)
+            (tokens, Binding::Postfix, true, None)
         } else if ty.supports_copy() {
-            (quote! { *#ident }, Binding::Prefix, false)
+            (quote! { *#ident }, Binding::Prefix, false, Some(quote! { #ident }))
         } else {
             let tokens = if nullable {
                 quote! { #ident.as_ref() }
             } else {
                 quote! { #ident }
             };
-            (tokens, Binding::Postfix, true)
+            (tokens, Binding::Postfix, true, None)
         };
-        Ok(Operand { tokens, binding, nullable, by_reference, ty, columns: vec![column] })
+        Ok(Operand { tokens, binding, nullable, by_reference, borrowed, ty, columns: vec![column] })
     }
 
     /// Translates both operands of a binary operator, giving a literal the
@@ -747,7 +886,19 @@ where
         };
         let mut columns = left.columns;
         columns.extend(right.columns);
-        Operand { tokens, binding, nullable, by_reference: false, ty, columns }
+        Operand { tokens, binding, nullable, by_reference: false, borrowed: None, ty, columns }
+    }
+
+    /// Negates a boolean operand, NULL when it is NULL.
+    fn not(operand: Operand<'workspace, 'db, DB>) -> Operand<'workspace, 'db, DB> {
+        let (tokens, binding) = if operand.nullable {
+            let receiver = operand.receiver();
+            (quote! { #receiver.map(|value| !value) }, Binding::Postfix)
+        } else {
+            let negated = operand.operand();
+            (quote! { !#negated }, Binding::Prefix)
+        };
+        Operand { tokens, binding, by_reference: false, borrowed: None, ..operand }
     }
 
     /// Combines two boolean operands with SQL's AND or OR.
@@ -773,6 +924,7 @@ where
                 binding: Binding::Postfix,
                 nullable: false,
                 by_reference: false,
+                borrowed: None,
                 ty: bool_type,
                 columns,
             });
@@ -806,6 +958,7 @@ where
             binding: Binding::Loose,
             nullable,
             by_reference: false,
+            borrowed: None,
             ty: bool_type,
             columns,
         })
@@ -833,6 +986,7 @@ where
             binding: Binding::Postfix,
             nullable: false,
             by_reference: false,
+            borrowed: None,
             ty: self.workspace.bool(),
             columns: operand.columns,
         })
@@ -916,6 +1070,13 @@ where
                 self.in_list(needle, list, *negated)
             }
             Expr::BinaryOp { left, op, right } => {
+                if let Some((inner, holds_when_true)) = boolean_literal_comparison(left, op, right)
+                {
+                    let inner = self.operand(inner, None)?;
+                    if inner.ty.is_bool() {
+                        return Ok(if holds_when_true { inner } else { Self::not(inner) });
+                    }
+                }
                 if let Some(operator) = comparison_operator(op) {
                     return self.comparison(left, &operator, right);
                 }
@@ -998,6 +1159,7 @@ where
             binding: Binding::Postfix,
             nullable: false,
             by_reference: false,
+            borrowed: None,
             ty,
             columns: Vec::new(),
         })
@@ -1075,6 +1237,7 @@ where
             binding,
             nullable: text.nullable,
             by_reference: false,
+            borrowed: None,
             ty: self.workspace.bool(),
             columns: text.columns,
         })
@@ -1111,6 +1274,7 @@ where
             binding: Binding::Postfix,
             nullable: argument.nullable,
             by_reference: false,
+            borrowed: None,
             ty,
             columns: argument.columns,
         })
@@ -1186,7 +1350,7 @@ where
         let mut call_arguments = Vec::with_capacity(arguments.len());
         let mut zipped: Option<(TokenStream, TokenStream)> = None;
         for (index, argument) in arguments.iter().enumerate() {
-            let value = if argument.nullable {
+            call_arguments.push(if argument.nullable {
                 let binding = format_ident!("argument{index}");
                 zipped = Some(match zipped {
                     None => (quote! { #binding }, argument.receiver()),
@@ -1195,16 +1359,13 @@ where
                         (quote! { (#pattern, #binding) }, quote! { #option.zip(#tokens) })
                     }
                 });
-                quote! { #binding }
-            } else if argument.by_reference {
-                argument.tokens.clone()
+                if argument.by_reference {
+                    quote! { #binding }
+                } else {
+                    quote! { &#binding }
+                }
             } else {
-                argument.operand()
-            };
-            call_arguments.push(if argument.by_reference {
-                value
-            } else {
-                quote! { &#value }
+                argument.reference()
             });
         }
         let call = body(quote! { #path(#(#call_arguments),*) });
@@ -1225,6 +1386,7 @@ where
             binding: Binding::Postfix,
             nullable,
             by_reference: false,
+            borrowed: None,
             ty: self.workspace.bool(),
             columns,
         })
@@ -1232,7 +1394,7 @@ where
 
     /// Translates a check that is a single call to a validation function,
     /// returning the function's own error.
-    fn validation_call(&self, function: &Function) -> Result<TokenStream, Error> {
+    fn validation_call(&self, function: &Function) -> Result<Check, Error> {
         let (path, arguments) = self.function_call(function)?;
         let columns = arguments
             .iter()
@@ -1249,10 +1411,10 @@ where
                 ))
             }
         });
-        Ok(if nullable {
+        Ok(Check::Statement(if nullable {
             quote! { #call.transpose()?; }
         } else {
             quote! { #call?; }
-        })
+        }))
     }
 }

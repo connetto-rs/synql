@@ -270,7 +270,7 @@ fn a_crate_mapping_the_type_keeps_precedence() {
     assert!(people_manifest.contains("moods.workspace = true"), "{people_manifest}");
     let people_lib = std::fs::read_to_string(temp_dir.path().join("moody-people/src/lib.rs"))
         .expect("The table crate has a library");
-    assert!(people_lib.contains(":: moods :: Mood"), "{people_lib}");
+    assert!(people_lib.contains("::moods::Mood"), "{people_lib}");
 }
 
 /// Generates the workspace of the schema and returns the generation result.

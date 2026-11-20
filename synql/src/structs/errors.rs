@@ -108,6 +108,15 @@ pub enum Error {
         /// The construct that has no translation.
         reason: UnsupportedCheck,
     },
+    #[error("Code generated for `{}` does not parse as a Rust file: {source}", path.display())]
+    /// The code generated for a file, items returned by callbacks included,
+    /// does not parse as a Rust file.
+    UnparsableCode {
+        /// Path of the file the code was generated for.
+        path: std::path::PathBuf,
+        /// The parse error.
+        source: syn::Error,
+    },
 }
 
 /// SQL constructs of a check constraint that have no Rust translation.
