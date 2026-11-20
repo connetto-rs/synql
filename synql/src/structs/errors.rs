@@ -38,6 +38,17 @@ pub enum Error {
         /// Name of the column.
         column_name: String,
     },
+    #[error(
+        "Generated column `{column_name}` is part of the primary key of table `{table_name}`, whose other key columns the builder sets"
+    )]
+    /// A stored generated column in a primary key whose other columns the
+    /// builder sets.
+    GeneratedKeyColumn {
+        /// Name of the table of the column.
+        table_name: String,
+        /// Name of the generated column.
+        column_name: String,
+    },
     #[error("The {first} and the {second} would both generate the Rust crate `{crate_ident}`")]
     /// Two generated crates whose names fold to the same Rust crate name, as
     /// the crates of the enum types `"Mood"` and `mood`, or of the enum type

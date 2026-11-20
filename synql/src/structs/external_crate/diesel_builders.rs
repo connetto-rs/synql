@@ -25,7 +25,7 @@ impl ExternalCrate {
         ExternalCrate::new("diesel-builders")
             .unwrap()
             .features(number_of_columns.as_diesel_builders_feature())
-            .version("0.1.1")
+            .version("0.1.2")
             .unwrap()
             .into()
     }

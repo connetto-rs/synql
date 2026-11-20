@@ -1076,7 +1076,7 @@ checksum = "3244542535d5de959d90ec55d1b5ff0fd2bb7b1310223907d5f11932847f7b59"
 [[package]]
 name = "sql-traits"
 version = "0.1.0"
-source = "git+https://github.com/connetto-rs/sql-traits?branch=main#7b1021e7ed3b4d4990d586bfb14767820dde8d8f"
+source = "git+https://github.com/connetto-rs/sql-traits?branch=main#b7e8a175b3a1cdebc32b6d89b610a353e8cc9bc0"
 dependencies = [
  "geometric-traits",
  "git2",
