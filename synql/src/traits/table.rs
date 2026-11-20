@@ -512,7 +512,10 @@ where
     ) -> Result<Vec<proc_macro2::TokenStream>, crate::Error> {
         let mut validation_impls = Vec::new();
         for column in self.columns(database)? {
-            if column.has_single_column_check_constraints(database)? {
+            // A generated column is never set, so never validated.
+            if column.generation_expression().is_none()
+                && column.has_single_column_check_constraints(database)?
+            {
                 validation_impls.push(column.generate_validation_impl(workspace, database)?);
             }
         }
@@ -543,14 +546,17 @@ where
             {
                 continue;
             }
-            let mut involves_surrogate_key = false;
+            // Only the database holds a value for these columns.
+            let mut involves_unset_column = false;
             for column in check_constraint.columns(database)? {
-                if table_has_surrogate_pk && column.is_primary_key(database)? {
-                    involves_surrogate_key = true;
+                if (table_has_surrogate_pk && column.is_primary_key(database)?)
+                    || column.generation_expression().is_some()
+                {
+                    involves_unset_column = true;
                     break;
                 }
             }
-            if involves_surrogate_key {
+            if involves_unset_column {
                 continue;
             }
             validations.push(check_constraint.to_syn(database, workspace, &[])?);

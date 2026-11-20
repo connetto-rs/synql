@@ -606,6 +606,29 @@ pub trait ColumnSynLike: ColumnLike {
             });
         }
 
+        let rust_type = if self.is_nullable(database)? {
+            syn::parse_quote!(Option<#rust_type>)
+        } else {
+            rust_type.clone()
+        };
+
+        // `surrogate_key` on the table already covers a surrogate key.
+        if self.generation_expression().is_some() && !self.is_surrogate_key(database)? {
+            if self.is_primary_key(database)? {
+                return Err(crate::Error::GeneratedKeyColumn {
+                    table_name: table.table_name().to_string(),
+                    column_name: column_name.to_string(),
+                });
+            }
+            return Ok(quote! {
+                #[doc = #documentation]
+                #[table_model(generated)]
+                #sql_type_decorator
+                #sql_name_decorator
+                #column_ident: #rust_type
+            });
+        }
+
         // If the column has vertical same-as constraint, we add the
         // ` #[same_as(parent::parent_column)]` decorators
         let vertical_same_as_decorators =
@@ -635,12 +658,6 @@ pub trait ColumnSynLike: ColumnLike {
             })
         } else {
             None
-        };
-
-        let rust_type = if self.is_nullable(database)? {
-            syn::parse_quote!(Option<#rust_type>)
-        } else {
-            rust_type.clone()
         };
 
         Ok(quote! {
