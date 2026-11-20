@@ -635,20 +635,18 @@ where
     }
 
     /// Translates the text of the quoted literal into a Rust value of the
-    /// type, refusing a NaN that the type would hold.
+    /// type.
     fn typed_string(
         &self,
         value: &Value,
         string: &str,
         ty: ExternalTypeRef<'workspace>,
     ) -> Result<TokenStream, Error> {
-        if ty.is_nan_literal(string) {
-            return Err(self.unsupported(UnsupportedCheck::NotANumber(value.to_string())));
-        }
         ty.cast(string).map_err(|_| {
-            self.unsupported(UnsupportedCheck::MixedTypes {
-                left: type_name(ty),
-                right: value.to_string(),
+            self.unsupported(if ty.is_nan_literal(string) {
+                UnsupportedCheck::NotANumber(value.to_string())
+            } else {
+                UnsupportedCheck::MixedTypes { left: type_name(ty), right: value.to_string() }
             })
         })
     }

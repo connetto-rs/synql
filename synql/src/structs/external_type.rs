@@ -250,8 +250,9 @@ impl<'text> FloatInput<'text> {
 }
 
 /// Returns the tokens of the value read as a PostgreSQL float of the Rust
-/// float type `F`, spelled `rust_type`, or `None` when the value is not a
-/// number `F` holds.
+/// float type `F`, spelled `rust_type`, or `None` when the value is NaN, which
+/// PostgreSQL orders above every other float while Rust leaves it unordered,
+/// or is not a number `F` holds.
 fn float_tokens<F>(value: &str, rust_type: &syn::Type) -> Option<proc_macro2::TokenStream>
 where
     F: core::str::FromStr + ToTokens + Into<f64> + Copy,
@@ -259,7 +260,7 @@ where
     Some(match FloatInput::read(value) {
         FloatInput::Infinity => quote! { #rust_type::INFINITY },
         FloatInput::NegativeInfinity => quote! { #rust_type::NEG_INFINITY },
-        FloatInput::NotANumber => quote! { #rust_type::NAN },
+        FloatInput::NotANumber => return None,
         FloatInput::Number(number) => {
             let number: F = number.parse().ok()?;
             if !number.into().is_finite() {
