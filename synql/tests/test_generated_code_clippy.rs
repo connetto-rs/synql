@@ -110,8 +110,12 @@ CREATE TABLE switches (
     archived BOOLEAN NOT NULL CHECK (archived = false),
     flagged BOOLEAN CHECK (flagged <> true),
     label TEXT,
+    first_count INT NOT NULL,
+    second_count INT NOT NULL,
     CHECK (enabled = true OR label IS NOT NULL),
-    CHECK (false = archived OR label IS NULL)
+    CHECK (false = archived OR label IS NULL),
+    CHECK (flagged <> true OR label IS NOT NULL),
+    CHECK ((first_count < second_count) = true)
 );",
     );
 }
@@ -125,7 +129,7 @@ CREATE FUNCTION is_ordered(INT, INT) RETURNS BOOLEAN AS 'SELECT $1 < $2' LANGUAG
 CREATE TABLE ranges (
     id INT PRIMARY KEY,
     low INT NOT NULL CHECK (is_positive(low)),
-    high INT NOT NULL,
+    high INT,
     CHECK (is_ordered(low, high))
 );",
     )

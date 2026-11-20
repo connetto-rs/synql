@@ -466,13 +466,11 @@ where
         if let Expr::BinaryOp { left, op, right } = strip_nesting(expr) {
             if let Some((inner, holds_when_true)) = boolean_literal_comparison(left, op, right) {
                 let inner_operand = self.operand(inner, None)?;
-                if inner_operand.ty.is_bool() {
-                    return if holds_when_true {
-                        self.violation(inner, &inner_operand)
-                    } else {
-                        Ok(inner_operand.operand())
-                    };
-                }
+                return if holds_when_true {
+                    self.violation(inner, &inner_operand)
+                } else {
+                    Ok(inner_operand.operand())
+                };
             }
             if let Some(negation) = self.negated_comparison(left, op, right)? {
                 return Ok(negation);
@@ -1073,9 +1071,7 @@ where
                 if let Some((inner, holds_when_true)) = boolean_literal_comparison(left, op, right)
                 {
                     let inner = self.operand(inner, None)?;
-                    if inner.ty.is_bool() {
-                        return Ok(if holds_when_true { inner } else { Self::not(inner) });
-                    }
+                    return Ok(if holds_when_true { inner } else { Self::not(inner) });
                 }
                 if let Some(operator) = comparison_operator(op) {
                     return self.comparison(left, &operator, right);

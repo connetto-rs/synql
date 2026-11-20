@@ -66,22 +66,15 @@ pub trait CheckConstraintSynLike: CheckConstraintLike {
             return Ok(quote! { #(#checks)* });
         }
 
+        // A check on a single column runs with that column in context, so at
+        // least two columns remain to read here.
         let column_idents = relevant_optional_columns
             .iter()
             .map(ColumnSynLike::column_snake_ident)
             .collect::<Vec<_>>();
         let table_ident = self.table(database)?.table_snake_ident();
-        let (pattern, values) = if let [column_ident] = column_idents.as_slice() {
-            (
-                quote! { Some(#column_ident) },
-                quote! { <Self as diesel_builders::MayGetColumn<#table_ident::#column_ident>>::may_get_column_ref(self) },
-            )
-        } else {
-            (
-                quote! { (#(Some(#column_idents)),*) },
-                quote! { (#(<Self as diesel_builders::MayGetColumn<#table_ident::#column_idents>>::may_get_column_ref(self)),*) },
-            )
-        };
+        let pattern = quote! { (#(Some(#column_idents)),*) };
+        let values = quote! { (#(<Self as diesel_builders::MayGetColumn<#table_ident::#column_idents>>::may_get_column_ref(self)),*) };
         Ok(match checks.as_slice() {
             // From the 2024 edition on, a single condition joins the pattern
             // in a let chain rather than nesting in its block.
