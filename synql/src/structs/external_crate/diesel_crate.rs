@@ -56,7 +56,7 @@ impl ExternalCrate {
     pub fn diesel(number_of_columns: MaximalNumberOfColumns) -> ExternalCrate {
         ExternalCrate::new("diesel")
             .unwrap()
-            .features(["chrono", "serde_json"])
+            .feature("serde_json")
             .features(number_of_columns.as_diesel_feature_str())
             .version("2.3.13")
             .unwrap()

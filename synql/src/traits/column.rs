@@ -42,20 +42,20 @@ fn string_literal(expr: &Expr) -> Option<&str> {
     }
 }
 
-/// Returns whether `expr` reads the start time of the current transaction,
-/// which PostgreSQL spells `now()`, `transaction_timestamp()` and
-/// `CURRENT_TIMESTAMP` in any case, through any parentheses around it.
-fn is_current_timestamp(expr: &Expr) -> bool {
+/// PostgreSQL's spellings of the start time of the current transaction, read
+/// in any case.
+const CURRENT_TIMESTAMP: [&str; 3] = ["now", "transaction_timestamp", "current_timestamp"];
+
+/// Returns whether `expr` calls one of the `functions`, in any case and
+/// without arguments, through any parentheses around it.
+fn is_argumentless_call(expr: &Expr, functions: &[&str]) -> bool {
     match expr {
-        Expr::Nested(inner) => is_current_timestamp(inner),
+        Expr::Nested(inner) => is_argumentless_call(inner, functions),
         Expr::Function(function) => {
             let argumentless = matches!(&function.args, FunctionArguments::None)
                 || matches!(&function.args, FunctionArguments::List(list) if list.args.is_empty());
             let name = function.name.to_string();
-            argumentless
-                && ["now", "transaction_timestamp", "current_timestamp"]
-                    .iter()
-                    .any(|current_timestamp| name.eq_ignore_ascii_case(current_timestamp))
+            argumentless && functions.iter().any(|candidate| name.eq_ignore_ascii_case(candidate))
         }
         _ => false,
     }
@@ -402,6 +402,7 @@ pub trait ColumnSynLike: ColumnLike {
             });
         };
 
+        let rust_type = external_postgres_type.rust_type().to_token_stream().to_string();
         let casted_default_value = match default_value.as_str() {
             _ if external_postgres_type.is_enum() => {
                 string_literal(default_expression)
@@ -430,10 +431,20 @@ pub trait ColumnSynLike: ColumnLike {
                     ::rosetta_uuid::Uuid::utc_v7()
                 }
             }
-            _ if is_current_timestamp(default_expression)
+            _ if is_argumentless_call(default_expression, &CURRENT_TIMESTAMP)
                 && external_postgres_type.crate_name() == "rosetta-utc" =>
             {
                 quote! { ::rosetta_utc::TimestampUTC::now() }
+            }
+            _ if is_argumentless_call(default_expression, &["current_date"])
+                && rust_type == ":: rosetta_time :: Date" =>
+            {
+                quote! { ::rosetta_time::Date::today_utc() }
+            }
+            _ if is_argumentless_call(default_expression, &["localtime"])
+                && rust_type == ":: rosetta_time :: Time" =>
+            {
+                quote! { ::rosetta_time::Time::now_utc() }
             }
             _ => {
                 let Ok(casted_default_value) = external_postgres_type.cast(&default_value) else {
@@ -443,7 +454,7 @@ pub trait ColumnSynLike: ColumnLike {
                         self.column_name(),
                         self.table(database).table_name(),
                         self.data_type(database).name(database),
-                        external_postgres_type.rust_type().to_token_stream().to_string(),
+                        rust_type,
                         external_postgres_type.crate_name(),
                     );
                 };

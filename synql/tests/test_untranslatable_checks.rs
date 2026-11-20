@@ -152,7 +152,7 @@ fn builtin_functions_need_their_operand_types() {
     ));
     assert!(matches!(
         unsupported_reason(
-            "CREATE TABLE t (id INT PRIMARY KEY, created TIMESTAMP, CHECK (now() > created));"
+            "CREATE TABLE t (id INT PRIMARY KEY, created DATE, CHECK (now() > created));"
         ),
         UnsupportedCheck::FunctionCall(_)
     ));

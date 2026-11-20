@@ -12,11 +12,11 @@ use crate::structs::{
     external_crate::builder::ExternalCrateBuilderError,
 };
 mod builder;
-mod chrono_crate;
 mod core_crate;
 mod diesel_builders;
 mod diesel_crate;
 mod pgrx_validation;
+mod rosetta_time;
 mod rosetta_utc;
 mod rosetta_uuid_crate;
 mod serde;
