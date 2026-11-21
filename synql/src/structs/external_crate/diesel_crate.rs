@@ -58,9 +58,7 @@ impl ExternalCrate {
             .unwrap()
             .feature("serde_json")
             .features(number_of_columns.as_diesel_feature_str())
-            .version("2.3.13")
-            .unwrap()
-            .git("https://github.com/diesel-rs/diesel", "main")
+            .version("2.4.0")
             .unwrap()
             .types([ExternalType::new(
                 syn::parse_quote!(::diesel::result::Error),

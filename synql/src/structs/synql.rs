@@ -355,14 +355,20 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
         // A published crate followed on git is patched for its crates.io
         // dependents too, so the workspace builds a single copy of it.
-        writeln!(buffer, "[patch.crates-io]")?;
-        for external_crate in declared_crates {
-            let dependency: &TomlDependency = external_crate.as_ref();
-            if let Some(patch) = dependency.crates_io_patch() {
+        let patches: Vec<TomlDependency> = declared_crates
+            .into_iter()
+            .filter_map(|external_crate| {
+                let dependency: &TomlDependency = external_crate.as_ref();
+                dependency.crates_io_patch()
+            })
+            .collect();
+        if !patches.is_empty() {
+            writeln!(buffer, "[patch.crates-io]")?;
+            for patch in patches {
                 writeln!(buffer, "{patch}")?;
             }
+            writeln!(buffer)?;
         }
-        writeln!(buffer)?;
 
         // Write [workspace.lints.rust] section
         writeln!(buffer, "[workspace.lints.rust]")?;
