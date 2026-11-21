@@ -8,28 +8,20 @@ use crate::{
 };
 
 impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
-    /// Writes the `Cargo.toml` of a sink crate depending on the crates of
-    /// `tables` and on `dependencies`, and returns the names of the workspace
-    /// dependencies it declares.
+    /// Writes the `Cargo.toml` of a sink crate described by `description`,
+    /// depending on the crates of `tables` and on `dependencies`, and returns
+    /// the names of the workspace dependencies it declares.
     pub(super) fn write_sink_crate_toml(
         workspace: &Workspace,
         sink_crate_name: &str,
+        description: &str,
         sink_crate_path: &Path,
         tables: &[&DB::Table],
         dependencies: &[TomlDependency],
     ) -> Result<Vec<String>, crate::Error> {
         let cargo_toml_path = sink_crate_path.join("Cargo.toml");
         let mut buffer = std::fs::File::create(cargo_toml_path)?;
-        let (major, minor, patch) = workspace.version();
-
-        writeln!(
-            buffer,
-            r#"[package]
-name = "{sink_crate_name}"
-version = "{major}.{minor}.{patch}"
-edition.workspace = true
-"#
-        )?;
+        write!(buffer, "{}", workspace.package_section(sink_crate_name, description))?;
 
         // Add dependencies
         writeln!(buffer, "\n[dependencies]")?;

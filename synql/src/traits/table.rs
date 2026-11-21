@@ -84,23 +84,19 @@ where
     }
 
     /// Returns the workspace dependency on the crate associated with this
-    /// table, a path into the workspace or the crate of the base workspace.
+    /// table, the crate of the base workspace or a path into the workspace
+    /// pinned at the version of the workspace.
     ///
     /// # Arguments
     ///
     /// * `workspace` - The workspace where the crate is defined.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the path cannot be set.
     #[must_use]
     fn crate_dependency(&self, workspace: &Workspace) -> TomlDependency {
         if let Some(dependency) = workspace.base_table_crate(&self.table_snake_name()) {
             return dependency.clone();
         }
-        TomlDependency::new(self.crate_name(workspace))
-            .path(self.crate_relative_path(workspace).display().to_string())
-            .expect("Should be able to set path")
+        workspace
+            .member_dependency(self.crate_name(workspace), &self.crate_relative_path(workspace))
     }
 
     /// Returns the ident of this table, with no normalization applied.

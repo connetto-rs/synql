@@ -28,6 +28,8 @@ pub struct SynQLBuilder<'db, DB: SynQLDatabaseLike> {
     sql: Option<String>,
     version: (u8, u8, u8),
     edition: u16,
+    license: Option<String>,
+    repository: Option<String>,
     generate_workspace_toml: bool,
     generate_rustfmt: bool,
     sink_crate_name: Option<String>,
@@ -58,6 +60,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
             sql: None,
             version: (0, 1, 0),
             edition: 2024,
+            license: None,
+            repository: None,
             generate_workspace_toml: false,
             generate_rustfmt: false,
             sink_crate_name: None,
@@ -137,6 +141,27 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
     #[inline]
     pub fn edition(mut self, edition: u16) -> Self {
         self.edition = edition;
+        self
+    }
+
+    /// Sets the SPDX license expression, such as `MIT OR Apache-2.0`, that
+    /// the workspace declares and every crate it generates inherits.
+    ///
+    /// crates.io refuses a crate without a license, so a workspace whose
+    /// crates are published sets one.
+    #[must_use]
+    #[inline]
+    pub fn license(mut self, license: &str) -> Self {
+        self.license = Some(license.to_owned());
+        self
+    }
+
+    /// Sets the URL of the repository that the workspace declares and every
+    /// crate it generates inherits.
+    #[must_use]
+    #[inline]
+    pub fn repository(mut self, repository: &str) -> Self {
+        self.repository = Some(repository.to_owned());
         self
     }
 
@@ -332,6 +357,8 @@ impl<'db, DB: SynQLDatabaseLike> From<SynQLBuilder<'db, DB>> for SynQL<'db, DB> 
             base: builder.base,
             sql: builder.sql,
             version: builder.version,
+            license: builder.license,
+            repository: builder.repository,
             edition: builder.edition,
             generate_workspace_toml: builder.generate_workspace_toml,
             generate_rustfmt: builder.generate_rustfmt,
