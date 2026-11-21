@@ -39,6 +39,8 @@ pub struct Workspace {
     crate_tables: HashMap<String, String>,
     /// The crates of the base workspace holding its tables and enum types.
     base_crates: BaseCrates,
+    /// Whether the workspace is written as a single crate named after it.
+    single_crate: bool,
 }
 
 impl Workspace {
@@ -155,6 +157,32 @@ impl Workspace {
     /// when the workspace generates the type itself.
     pub fn base_type_crate(&self, qualified_name: &str) -> Option<&TomlDependency> {
         self.base_crates.enum_type(qualified_name)
+    }
+
+    #[inline]
+    #[must_use]
+    /// Returns whether the workspace is written as a single crate named
+    /// after it, which holds each table and enum type in its own module.
+    pub fn is_single_crate(&self) -> bool {
+        self.single_crate
+    }
+
+    #[inline]
+    #[must_use]
+    /// Returns whether the crate holding the enum type named
+    /// `qualified_name` holds it in a module named after it, because the
+    /// crate is a single crate of this workspace or of its base.
+    pub fn is_enum_type_in_module(&self, qualified_name: &str) -> bool {
+        self.base_type_crate(qualified_name)
+            .map_or(self.single_crate, |dependency| self.is_single_base_crate(dependency.name()))
+    }
+
+    #[inline]
+    #[must_use]
+    /// Returns whether the crate `name` of the base workspace is a single
+    /// crate, whose models sit behind its `models` feature.
+    pub fn is_single_base_crate(&self, name: &str) -> bool {
+        self.base_crates.is_single_crate(name)
     }
 
     /// Returns the external type ref corresponding to the provided Postgres

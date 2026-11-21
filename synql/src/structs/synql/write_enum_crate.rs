@@ -1,6 +1,7 @@
 //! Submodule implementing the writing of the crates of the PostgreSQL enum
 //! types.
 
+use proc_macro2::TokenStream;
 use quote::quote;
 use sql_traits::traits::UserDefinedTypeLike;
 
@@ -11,8 +12,9 @@ use crate::{
 };
 
 impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
-    /// Returns the PostgreSQL enum types of the database whose crates the
-    /// workspace holds, leaving out those of its base.
+    /// Returns the PostgreSQL enum types of the database whose Rust enums the
+    /// workspace generates, leaving out those of its base and those a
+    /// registered crate maps.
     pub(super) fn enum_types<'workspace>(
         &self,
         workspace: &'workspace Workspace,
@@ -21,9 +23,11 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             let crate_name = user_defined_type.enum_crate_name(workspace);
             user_defined_type.enumeration().is_some()
                 && workspace.base_type_crate(&user_defined_type.qualified_name()).is_none()
-                && workspace
-                    .external_crates()
-                    .any(|external_crate| external_crate.name() == crate_name)
+                && user_defined_type.enum_postgres_types().first().is_some_and(|postgres_type| {
+                    workspace.external_postgres_type(postgres_type).is_some_and(|external_type| {
+                        external_type.external_crate().name() == crate_name
+                    })
+                })
         })
     }
 
@@ -60,16 +64,21 @@ workspace = true
 "#
         );
         std::fs::write(crate_path.join("Cargo.toml"), cargo_toml)?;
+        write_rust_file(&src_path.join("lib.rs"), Self::enum_items(user_defined_type))?;
+        Ok(["serde", "diesel"])
+    }
+
+    /// Returns the Rust enum of the provided enum type, next to the
+    /// `sql_types` module holding its diesel SQL type.
+    pub(super) fn enum_items(user_defined_type: &DB::UserDefinedType) -> TokenStream {
         let sql_type = user_defined_type.enum_sql_type_tokens();
         let enum_tokens = user_defined_type.enum_tokens();
-        let content = quote! {
+        quote! {
             pub mod sql_types {
                 #sql_type
             }
 
             #enum_tokens
-        };
-        write_rust_file(&src_path.join("lib.rs"), content)?;
-        Ok(["serde", "diesel"])
+        }
     }
 }

@@ -37,7 +37,8 @@ where
 {
     /// Returns the name of the crate associated with this table, which holds
     /// the tables grouped with it and is named after one of them, or which
-    /// the base workspace holds it in.
+    /// is the single crate named after the workspace, or which the base
+    /// workspace holds it in.
     ///
     /// # Arguments
     ///
@@ -47,6 +48,7 @@ where
         let table_snake_name = self.table_snake_name();
         match workspace.base_table_crate(&table_snake_name) {
             Some(dependency) => dependency.name().to_owned(),
+            None if workspace.is_single_crate() => workspace.name().to_owned(),
             None => {
                 format!("{}-{}", workspace.name(), workspace.crate_table_name(&table_snake_name))
             }

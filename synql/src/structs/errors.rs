@@ -72,6 +72,26 @@ pub enum Error {
         /// The Rust crate name both crates would have.
         crate_ident: String,
     },
+    #[error(
+        "The {first} and the {second} would both generate the module `{module_ident}` of the single crate"
+    )]
+    /// Two modules of a single crate that would share their name, as the
+    /// modules of the enum types `"Mood"` and `mood`, or the module of the
+    /// enum type `mood` and the module `public_mood` of the table
+    /// `public_mood`.
+    ModuleNameClash {
+        /// The table or enum type generated first.
+        first: String,
+        /// The table or enum type generated second.
+        second: String,
+        /// The name of the module both would generate.
+        module_ident: String,
+    },
+    #[error("A workspace written as a single crate has no sink crate")]
+    /// A sink crate or a DAG sink crate prefix set together with
+    /// [`SynQLBuilder::single_crate`](crate::structs::SynQLBuilder::single_crate),
+    /// whose crate already holds the whole workspace.
+    SinkCrateInSingleCrate,
     #[error("Function definition not found for function `{function_name}`")]
     /// Function definition not found error.
     FunctionNotFound {
