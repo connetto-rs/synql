@@ -207,12 +207,6 @@ impl WorkspaceBuilder {
         self.external_crate(ExternalCrate::sqlitegis()).diesel(number_of_columns)
     }
 
-    /// Adds the `pgrx_validation` external crate to the workspace.
-    #[must_use]
-    pub fn pgrx_validation(self) -> Self {
-        self.external_crate(ExternalCrate::pgrx_validation())
-    }
-
     /// Adds the `rosetta_uuid` external crate to the workspace.
     #[must_use]
     pub fn rosetta_uuid(self) -> Self {

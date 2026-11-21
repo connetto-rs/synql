@@ -206,6 +206,7 @@ fn test_enum_types() {
 
     let synql: SynQL<ParserDB> = SynQL::new(&db, &workspace_path)
         .name("synql-enum-types")
+        .external_crate(ExternalCrate::serde_json())
         .member(TomlDependency::new("assertions").path("assertions").expect("A valid path"))
         .generate_workspace_toml()
         .into();

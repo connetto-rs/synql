@@ -15,7 +15,6 @@ mod builder;
 mod core_crate;
 mod diesel_builders;
 mod diesel_crate;
-mod pgrx_validation;
 mod rosetta_time;
 mod rosetta_utc;
 mod rosetta_uuid_crate;

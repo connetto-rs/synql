@@ -218,14 +218,20 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         Ok(dependencies)
     }
 
-    /// Writes the workspace TOML.
+    /// Writes the workspace TOML. `member_dependencies` holds the names of the
+    /// workspace dependencies the generated crates declare, and a crate SynQL
+    /// ships is declared only when it is among them.
     ///
     /// # Errors
     ///
     /// Returns an error if writing to the file fails or if the tables cannot be
     /// resolved in the database.
     #[allow(clippy::too_many_lines)]
-    pub fn write_toml(&self, workspace: &Workspace) -> Result<(), crate::Error> {
+    fn write_toml(
+        &self,
+        workspace: &Workspace,
+        member_dependencies: &HashSet<String>,
+    ) -> Result<(), crate::Error> {
         use std::io::Write;
 
         let toml_path = self.path.join("Cargo.toml");
@@ -331,12 +337,18 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             writeln!(buffer, "{dependency}")?;
         }
 
-        // Write external dependencies
-        for external_crate in workspace.external_crates() {
-            if !external_crate.is_dependency() {
-                continue;
-            }
-
+        // A crate SynQL ships is declared only when a generated crate depends
+        // on it. A registered crate stays declared for the hand-written
+        // members, whose manifests SynQL does not see.
+        let declared_crates = workspace
+            .external_crates()
+            .filter(|external_crate| {
+                external_crate.is_dependency()
+                    && (member_dependencies.contains(external_crate.name())
+                        || self.external_crates.contains(external_crate))
+            })
+            .collect::<Vec<_>>();
+        for external_crate in &declared_crates {
             writeln!(buffer, "{}", external_crate.as_ref())?;
         }
         writeln!(buffer)?;
@@ -344,7 +356,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         // A published crate followed on git is patched for its crates.io
         // dependents too, so the workspace builds a single copy of it.
         writeln!(buffer, "[patch.crates-io]")?;
-        for external_crate in workspace.external_crates() {
+        for external_crate in declared_crates {
             let dependency: &TomlDependency = external_crate.as_ref();
             if let Some(patch) = dependency.crates_io_patch() {
                 writeln!(buffer, "{patch}")?;
@@ -525,7 +537,6 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             .rosetta_time()
             .core()
             .std()
-            .pgrx_validation()
             .serde()
             .serde_json()
             .validation_errors()
@@ -609,10 +620,12 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         }
 
         let mut time_tracker = TimeTracker::new("SQL Workspace Generation");
+        let mut member_dependencies: HashSet<String> = HashSet::new();
 
         for user_defined_type in self.enum_types(&workspace) {
             let writing_enum_crate = Task::new("writing_enum_crate");
-            Self::write_enum_crate(user_defined_type, &workspace)?;
+            member_dependencies
+                .extend(Self::write_enum_crate(user_defined_type, &workspace)?.map(str::to_owned));
             time_tracker.add_or_extend_completed_task(writing_enum_crate);
         }
 
@@ -622,7 +635,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             std::fs::create_dir_all(&crate_path)?;
 
             let writing_toml = Task::new("writing_crate_toml");
-            self.write_crate_toml(&tables, &workspace)?;
+            member_dependencies.extend(self.write_crate_toml(&tables, &workspace)?);
             time_tracker.add_or_extend_completed_task(writing_toml);
             let writing_lib = Task::new("writing_crate_lib");
             self.write_crate_lib(&tables, &workspace)?;
@@ -647,13 +660,13 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             for callback in &self.sink_toml_callbacks {
                 sink_dependencies.extend(callback(self.database)?);
             }
-            Self::write_sink_crate_toml(
+            member_dependencies.extend(Self::write_sink_crate_toml(
                 &workspace,
                 sink_crate_name,
                 &sink_crate_path,
                 &sink_tables,
                 &sink_dependencies,
-            )?;
+            )?);
             time_tracker.add_or_extend_completed_task(writing_sink_toml);
 
             let writing_sink_lib = Task::new("writing_sink_crate_lib");
@@ -693,13 +706,13 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
                 let writing_sink_toml =
                     Task::new(&format!("writing_sink_crate_toml_{sink_crate_name}"));
-                Self::write_sink_crate_toml(
+                member_dependencies.extend(Self::write_sink_crate_toml(
                     &workspace,
                     &sink_crate_name,
                     &sink_crate_path,
                     &dag_tables,
                     &[],
-                )?;
+                )?);
                 time_tracker.add_or_extend_completed_task(writing_sink_toml);
 
                 let writing_sink_lib =
@@ -717,7 +730,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
         if self.generate_workspace_toml {
             let workspace_toml_task = Task::new("workspace_toml");
-            self.write_toml(&workspace)?;
+            self.write_toml(&workspace, &member_dependencies)?;
             time_tracker.add_or_extend_completed_task(workspace_toml_task);
         }
 

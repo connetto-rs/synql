@@ -27,11 +27,12 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         })
     }
 
-    /// Writes the crate holding the Rust enum of the provided enum type.
+    /// Writes the crate holding the Rust enum of the provided enum type and
+    /// returns the names of the workspace dependencies it declares.
     pub(super) fn write_enum_crate(
         user_defined_type: &DB::UserDefinedType,
         workspace: &Workspace,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<[&'static str; 2], crate::Error> {
         let crate_path = user_defined_type.enum_crate_absolute_path(workspace);
         let src_path = crate_path.join("src");
         std::fs::create_dir_all(&src_path)?;
@@ -72,6 +73,7 @@ workspace = true
 
             #enum_tokens
         };
-        write_rust_file(&src_path.join("lib.rs"), content)
+        write_rust_file(&src_path.join("lib.rs"), content)?;
+        Ok(["serde", "diesel"])
     }
 }
