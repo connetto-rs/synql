@@ -12,6 +12,65 @@ use sqlparser::dialect::GenericDialect;
 use synql::prelude::*;
 
 #[test]
+fn generated_workspace_takes_diesel_from_crates_io() {
+    let db = ParserDB::parse::<GenericDialect>("CREATE TABLE users (id INT PRIMARY KEY);")
+        .expect("Unable to parse the schema");
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let workspace_path = temp_dir.path().join("diesel_workspace");
+    let synql: SynQL<ParserDB> =
+        SynQL::new(&db, &workspace_path).name("diesel-workspace").generate_workspace_toml().into();
+    synql.generate().expect("Unable to generate workspace");
+
+    let manifest = std::fs::read_to_string(workspace_path.join("Cargo.toml"))
+        .expect("Unable to read the workspace manifest");
+    let diesel = manifest
+        .lines()
+        .find(|line| line.starts_with("diesel = "))
+        .expect("The workspace declares diesel");
+    assert!(diesel.contains("version = "), "diesel has no version: {diesel}");
+    assert!(!diesel.contains("git = "), "diesel comes from git: {diesel}");
+    assert!(
+        !manifest.contains("[patch.crates-io]"),
+        "the workspace patches crates.io:\n{manifest}"
+    );
+}
+
+#[test]
+fn a_registered_crate_followed_on_git_is_patched_for_crates_io() {
+    let db = ParserDB::parse::<GenericDialect>("CREATE TABLE users (id INT PRIMARY KEY);")
+        .expect("Unable to parse the schema");
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let workspace_path = temp_dir.path().join("patched_workspace");
+    let followed = ExternalCrate::new("followed")
+        .expect("A valid crate name")
+        .version("1.0")
+        .expect("A valid version")
+        .git("https://github.com/connetto-rs/followed", "main")
+        .expect("A valid git source")
+        .into();
+    let synql: SynQL<ParserDB> = SynQL::new(&db, &workspace_path)
+        .name("patched-workspace")
+        .external_crate(followed)
+        .generate_workspace_toml()
+        .into();
+    synql.generate().expect("Unable to generate workspace");
+
+    let manifest = std::fs::read_to_string(workspace_path.join("Cargo.toml"))
+        .expect("Unable to read the workspace manifest");
+    let patches: Vec<&str> = manifest
+        .lines()
+        .skip_while(|line| *line != "[patch.crates-io]")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .collect();
+    assert_eq!(
+        patches,
+        ["followed = { git = \"https://github.com/connetto-rs/followed\", branch = \"main\" }"],
+        "{manifest}"
+    );
+}
+
+#[test]
 fn test_workspace_generation() -> Result<(), Box<dyn std::error::Error>> {
     let db = ParserDB::parse::<GenericDialect>(
         "
