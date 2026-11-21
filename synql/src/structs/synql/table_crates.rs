@@ -37,7 +37,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
     ) -> Result<HashMap<String, String>, crate::Error> {
         let mut tables = Vec::new();
         for table in self.database.table_dag()? {
-            if !self.skip_table(table)? {
+            if self.is_generated(table)? {
                 tables.push(table);
             }
         }
@@ -48,10 +48,15 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         let mut dependencies = Vec::new();
         for (dependent, &table) in tables.iter().enumerate() {
             for dependency in self.crate_dependencies(table)? {
+                // The crates of the base workspace are no community of this
+                // workspace.
+                if self.is_base_table(dependency) {
+                    continue;
+                }
                 let position = sorted_tables
                     .binary_search_by(|(candidate, _)| candidate.cmp(&dependency))
                     .map(|index| sorted_tables[index].1)
-                    .expect("Crate dependencies are tables which are not skipped");
+                    .expect("Crate dependencies are tables which are generated");
                 dependencies.push((dependent, position));
             }
         }
@@ -95,8 +100,8 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             .collect())
     }
 
-    /// Returns the tables held by each crate of the workspace, with crates
-    /// ordered by their first table.
+    /// Returns the tables held by each crate the workspace generates, with
+    /// crates ordered by their first table.
     ///
     /// # Errors
     ///
@@ -107,10 +112,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
     ) -> Result<Vec<Vec<&DB::Table>>, crate::Error> {
         let mut crates: Vec<Vec<&DB::Table>> = Vec::new();
         let mut crate_positions: HashMap<String, usize> = HashMap::new();
-        for table in self.database.tables() {
-            if self.skip_table(table)? {
-                continue;
-            }
+        for table in self.generated_tables()? {
             match crate_positions.entry(table.crate_name(workspace)) {
                 Entry::Occupied(entry) => crates[*entry.get()].push(table),
                 Entry::Vacant(entry) => {

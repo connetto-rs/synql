@@ -1,7 +1,10 @@
 //! Submodule defining the `SQLWorkspace` trait which allows to generate the
 //! `diesel` workspace from a SQL schema, based on `sql_traits`.
 
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use proc_macro2::TokenStream;
 
@@ -9,6 +12,7 @@ mod builder;
 mod table_crates;
 mod write_crate_lib;
 mod write_crate_toml;
+mod write_description_crate;
 mod write_enum_crate;
 mod write_sink_crate_lib;
 mod write_sink_crate_toml;
@@ -21,7 +25,10 @@ use sql_traits::{
 use time_requirements::{prelude::TimeTracker, task::Task};
 
 use crate::{
-    structs::{ExternalCrate, TomlDependency, Workspace, external_crate::MaximalNumberOfColumns},
+    structs::{
+        BaseCrates, BaseWorkspace, ExternalCrate, TomlDependency, Workspace,
+        external_crate::MaximalNumberOfColumns,
+    },
     traits::{SynQLDatabaseLike, UserDefinedTypeSynLike, table::TableSynLike},
 };
 
@@ -74,6 +81,13 @@ pub struct SynQL<'db, DB: SynQLDatabaseLike> {
     /// List of tables to be excluded from the workspace, which also imply
     /// excluding all of the tables that depend on them via foreign keys.
     deny_list: Vec<&'db DB::Table>,
+    /// The base workspace on top of which the workspace is generated.
+    base: Option<BaseWorkspace>,
+    /// The crates of the base workspace holding its tables and enum types.
+    base_crates: BaseCrates,
+    /// The SQL the workspace applies on top of its base, which makes it
+    /// describe itself in its description crate.
+    sql: Option<String>,
     /// Version of the generated workspace.
     version: (u8, u8, u8),
     /// Edition of the generated workspace.
@@ -133,14 +147,44 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         Ok(false)
     }
 
+    /// Returns whether the crate of `table` belongs to the base workspace.
+    fn is_base_table(&self, table: &DB::Table) -> bool {
+        self.base_crates.table(&table.table_snake_name()).is_some()
+    }
+
+    /// Returns whether the workspace generates the crate of `table`, which
+    /// is neither denied nor held by the base workspace.
+    fn is_generated(&self, table: &DB::Table) -> Result<bool, crate::Error> {
+        Ok(!self.is_base_table(table) && !self.skip_table(table)?)
+    }
+
+    /// Returns the tables whose crates the workspace generates.
+    fn generated_tables(&self) -> Result<Vec<&'db DB::Table>, crate::Error> {
+        let mut tables = Vec::new();
+        for table in self.database.tables() {
+            if self.is_generated(table)? {
+                tables.push(table);
+            }
+        }
+        Ok(tables)
+    }
+
+    /// Returns the name of the crate describing the workspace, which other
+    /// schemas are generated on top of.
+    fn description_crate_name(workspace: &Workspace) -> String {
+        format!("{}-synql", workspace.name())
+    }
+
     /// Returns the tables whose crates the crate of `table` depends on.
     ///
     /// These are the referenced tables, the extended ancestors and the spouses
     /// whose pair this crate owns. A spouse pair belongs to the table depending
     /// on the other, or to the smaller table when neither depends on the
     /// other, so that each pair gets a single owner and no crate cycle forms.
-    /// The crate of `table` also declares each of these tables as joinable
-    /// with its own.
+    /// A crate of the base workspace cannot depend on a generated crate, so
+    /// the generated table owns its pair with a table of the base. The crate
+    /// of `table` also declares each of these tables as joinable with its
+    /// own.
     ///
     /// # Errors
     ///
@@ -156,6 +200,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             .collect::<Vec<_>>();
         for spouse in table.spouses(self.database)? {
             if table.depends_on(self.database, spouse)?
+                || self.is_base_table(spouse)
                 || table < spouse && !spouse.depends_on(self.database, table)?
             {
                 candidates.push(spouse);
@@ -224,6 +269,16 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             wrote = true;
         }
 
+        if self.sql.is_some() {
+            if wrote {
+                write!(buffer, ", ")?;
+            }
+            let crate_path =
+                workspace.crate_base_path().join(Self::description_crate_name(workspace));
+            write!(buffer, "\"{}\"", crate_path.display())?;
+            wrote = true;
+        }
+
         if let Some(sink_crate_name) = &self.sink_crate_name {
             if wrote {
                 write!(buffer, ", ")?;
@@ -233,7 +288,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
         if let Some(prefix) = &self.dag_sink_crate_prefix {
             for root_table in self.database.root_tables()? {
-                if self.skip_table(root_table)? {
+                if !self.is_generated(root_table)? {
                     continue;
                 }
                 let root_name = root_table.table_snake_name();
@@ -271,6 +326,9 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         }
         for user_defined_type in self.enum_types(workspace) {
             writeln!(buffer, "{}", user_defined_type.enum_crate_dependency(workspace))?;
+        }
+        for dependency in self.base_dependencies(workspace)? {
+            writeln!(buffer, "{dependency}")?;
         }
 
         // Write external dependencies
@@ -320,21 +378,105 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         Ok(())
     }
 
+    /// Returns the crates of the base workspace which the generated crates
+    /// depend on, as the workspace declares them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the related tables, columns or check constraints
+    /// of the generated tables cannot be resolved.
+    fn base_dependencies(
+        &self,
+        workspace: &Workspace,
+    ) -> Result<Vec<TomlDependency>, crate::Error> {
+        let mut dependencies: Vec<TomlDependency> = Vec::new();
+        let mut external_crate_names: HashSet<&str> = HashSet::new();
+        for table in self.generated_tables()? {
+            for dependency in self.crate_dependencies(table)? {
+                if self.is_base_table(dependency) {
+                    let dependency = dependency.crate_dependency(workspace);
+                    if !dependencies.contains(&dependency) {
+                        dependencies.push(dependency);
+                    }
+                }
+            }
+            external_crate_names.extend(
+                table
+                    .external_crates(self.database, workspace)?
+                    .into_iter()
+                    .map(ExternalCrate::name),
+            );
+        }
+        for user_defined_type in self.database.user_defined_types() {
+            if workspace.base_type_crate(&user_defined_type.qualified_name()).is_some()
+                && external_crate_names
+                    .contains(user_defined_type.enum_crate_name(workspace).as_str())
+            {
+                dependencies.push(user_defined_type.enum_crate_dependency(workspace));
+            }
+        }
+        Ok(dependencies)
+    }
+
+    /// Checks that the database holds every table and enum type of the base
+    /// workspace, and that no table of the base depends on a table the
+    /// workspace generates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a table or an enum type of the base is missing,
+    /// if a table of the base depends on a generated table, or if the
+    /// related tables cannot be resolved.
+    fn check_base(&self) -> Result<(), crate::Error> {
+        let Some(base) = &self.base else {
+            return Ok(());
+        };
+        let tables: HashSet<String> =
+            self.database.tables().map(TableSynLike::table_snake_name).collect();
+        if let Some(missing) = base.tables().find(|table| !tables.contains(*table)) {
+            return Err(crate::Error::MissingBaseTable(missing.to_owned()));
+        }
+        let types: HashSet<String> = self
+            .database
+            .user_defined_types()
+            .map(UserDefinedTypeSynLike::qualified_name)
+            .collect();
+        if let Some(missing) = base.types().find(|enum_type| !types.contains(*enum_type)) {
+            return Err(crate::Error::MissingBaseType(missing.to_owned()));
+        }
+        for table in self.database.tables() {
+            if !self.is_base_table(table) {
+                continue;
+            }
+            for dependency in table
+                .referenced_tables(self.database)?
+                .into_iter()
+                .chain(table.ancestral_extended_tables(self.database)?)
+            {
+                if !self.is_base_table(dependency) {
+                    return Err(crate::Error::BaseTableDependsOnGeneratedTable {
+                        base_table: table.table_name().to_owned(),
+                        generated_table: dependency.table_name().to_owned(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_lines)]
     /// Executes the workspace generation.
     ///
     /// # Errors
     ///
     /// Returns an error if the workspace cannot be written to disk, if the
-    /// schema cannot be resolved, or if a column is a `TIMESTAMP` without
-    /// time zone.
+    /// schema cannot be resolved, if a column is a `TIMESTAMP` without
+    /// time zone, or if the schema does not extend the base workspace.
     pub fn generate(&self) -> Result<TimeTracker, crate::Error> {
+        self.check_base()?;
         let mut maximum_number_of_columns = 0;
         let mut maximum_number_of_columns_in_hierarchy = 0;
-        for table in self.database.tables() {
-            if self.skip_table(table)? {
-                continue;
-            }
+        for table in self.generated_tables()? {
             for column in table.columns(self.database)? {
                 let data_type = column.data_type(self.database);
                 let refusal: fn(String, String) -> crate::Error =
@@ -373,7 +515,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             Some(resolution) => self.grouped_crate_tables(resolution)?,
             None => HashMap::new(),
         };
-        let mut workspace: Workspace = Workspace::new()
+        let mut workspace = Workspace::new()
             .path(self.path.to_path_buf())
             .crate_base_path(self.crate_base_path.to_path_buf())
             .name(self.name.as_deref().unwrap_or_else(|| self.database.catalog_name()))
@@ -392,19 +534,26 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             .rosetta_uuid()
             .version(self.version.0, self.version.1, self.version.2)
             .edition(self.edition)
-            .crate_tables(crate_tables)
-            .into();
+            .crate_tables(crate_tables);
+        if let Some(base) = &self.base {
+            workspace = workspace.base(base);
+        }
+        let mut workspace: Workspace = workspace.into();
         // The enum types of the schema come last, and none is generated for a
-        // type name a crate of the workspace already maps. Each enum crate
-        // must have a Rust crate name no table crate or other enum crate has.
+        // type name a crate of the workspace already maps. Each generated
+        // crate must have a Rust crate name no other generated crate has.
         let mut crate_owners: Vec<(String, String)> = Vec::new();
-        for table in self.database.tables() {
-            if !self.skip_table(table)? {
-                crate_owners.push((
-                    table.crate_ident(&workspace).to_string(),
-                    format!("table `{}`", table.table_name()),
-                ));
-            }
+        for table in self.generated_tables()? {
+            crate_owners.push((
+                table.crate_ident(&workspace).to_string(),
+                format!("table `{}`", table.table_name()),
+            ));
+        }
+        if self.sql.is_some() {
+            crate_owners.push((
+                Self::description_crate_name(&workspace).replace('-', "_"),
+                "description of the workspace".to_owned(),
+            ));
         }
         let mut enum_external_crates: Vec<ExternalCrate> = Vec::new();
         for (user_defined_type, enum_external_crate) in
@@ -419,8 +568,12 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
                     Some((user_defined_type, user_defined_type.enum_external_crate(&workspace)?))
                 })
         {
-            let crate_ident = user_defined_type.enum_crate_ident(&workspace).to_string();
             let owner = format!("enum type `{}`", user_defined_type.qualified_name());
+            if workspace.base_type_crate(&user_defined_type.qualified_name()).is_some() {
+                enum_external_crates.push(enum_external_crate);
+                continue;
+            }
+            let crate_ident = user_defined_type.enum_crate_ident(&workspace).to_string();
             if let Some((_, other_owner)) =
                 crate_owners.iter().find(|(other_ident, _)| *other_ident == crate_ident)
             {
@@ -476,17 +629,18 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             time_tracker.add_or_extend_completed_task(writing_lib);
         }
 
+        if let Some(sql) = &self.sql {
+            let writing_description = Task::new("writing_description_crate");
+            self.write_description_crate(sql, &workspace)?;
+            time_tracker.add_or_extend_completed_task(writing_description);
+        }
+
         if let Some(sink_crate_name) = &self.sink_crate_name {
             let sink_crate_path =
                 workspace.path().join(workspace.crate_base_path()).join(sink_crate_name);
             std::fs::create_dir_all(&sink_crate_path)?;
 
-            let mut sink_tables = Vec::new();
-            for table in self.database.tables() {
-                if !self.skip_table(table)? {
-                    sink_tables.push(table);
-                }
-            }
+            let sink_tables = self.generated_tables()?;
 
             let writing_sink_toml = Task::new("writing_sink_crate_toml");
             let mut sink_dependencies = Vec::new();
@@ -519,7 +673,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
         if let Some(prefix) = &self.dag_sink_crate_prefix {
             for root_table in self.database.root_tables()? {
-                if self.skip_table(root_table)? {
+                if !self.is_generated(root_table)? {
                     continue;
                 }
                 let root_name = root_table.table_snake_name();
@@ -529,10 +683,9 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
                 std::fs::create_dir_all(&sink_crate_path)?;
 
                 let mut dag_tables = Vec::new();
-                for table in self.database.tables() {
-                    if !self.skip_table(table)?
-                        && (table.table_name() == root_table.table_name()
-                            || table.depends_on(self.database, root_table)?)
+                for table in self.generated_tables()? {
+                    if table.table_name() == root_table.table_name()
+                        || table.depends_on(self.database, root_table)?
                     {
                         dag_tables.push(table);
                     }

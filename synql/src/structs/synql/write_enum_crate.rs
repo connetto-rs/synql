@@ -12,7 +12,7 @@ use crate::{
 
 impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
     /// Returns the PostgreSQL enum types of the database whose crates the
-    /// workspace holds.
+    /// workspace holds, leaving out those of its base.
     pub(super) fn enum_types<'workspace>(
         &self,
         workspace: &'workspace Workspace,
@@ -20,6 +20,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         self.database.user_defined_types().filter(move |user_defined_type| {
             let crate_name = user_defined_type.enum_crate_name(workspace);
             user_defined_type.enumeration().is_some()
+                && workspace.base_type_crate(&user_defined_type.qualified_name()).is_none()
                 && workspace
                     .external_crates()
                     .any(|external_crate| external_crate.name() == crate_name)

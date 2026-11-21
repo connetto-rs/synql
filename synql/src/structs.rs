@@ -1,5 +1,8 @@
 //! Submodule defining structs used to generate Rust code from SQL schema.
 
+mod base_workspace;
+pub use base_workspace::BaseWorkspace;
+pub(crate) use base_workspace::{BaseCrates, DescribedCrate};
 mod synql;
 pub use synql::{SynQL, SynQLBuilder};
 mod workspace;

@@ -36,14 +36,21 @@ where
     <Self::DB as DatabaseLike>::Column: ColumnSynLike,
 {
     /// Returns the name of the crate associated with this table, which holds
-    /// the tables grouped with it and is named after one of them.
+    /// the tables grouped with it and is named after one of them, or which
+    /// the base workspace holds it in.
     ///
     /// # Arguments
     ///
     /// * `workspace` - The workspace where the crate is defined.
     #[must_use]
     fn crate_name(&self, workspace: &Workspace) -> String {
-        format!("{}-{}", workspace.name(), workspace.crate_table_name(&self.table_snake_name()))
+        let table_snake_name = self.table_snake_name();
+        match workspace.base_table_crate(&table_snake_name) {
+            Some(dependency) => dependency.name().to_owned(),
+            None => {
+                format!("{}-{}", workspace.name(), workspace.crate_table_name(&table_snake_name))
+            }
+        }
     }
 
     /// Returns the ident of the crate associated with this table.
@@ -76,7 +83,8 @@ where
         workspace.crate_base_path().join(self.crate_name(workspace))
     }
 
-    /// Returns the dependency of the crate associated with this table.
+    /// Returns the workspace dependency on the crate associated with this
+    /// table, a path into the workspace or the crate of the base workspace.
     ///
     /// # Arguments
     ///
@@ -87,6 +95,9 @@ where
     /// Panics if the path cannot be set.
     #[must_use]
     fn crate_dependency(&self, workspace: &Workspace) -> TomlDependency {
+        if let Some(dependency) = workspace.base_table_crate(&self.table_snake_name()) {
+            return dependency.clone();
+        }
         TomlDependency::new(self.crate_name(workspace))
             .path(self.crate_relative_path(workspace).display().to_string())
             .expect("Should be able to set path")
