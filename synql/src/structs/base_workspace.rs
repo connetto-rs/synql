@@ -1,7 +1,10 @@
 //! Submodule defining the description a generated workspace writes of
 //! itself, through which another schema is generated on top of its crates.
 
-use std::{collections::HashMap, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +17,10 @@ use crate::structs::TomlDependency;
 /// [`SynQLBuilder::sql`](crate::structs::SynQLBuilder::sql) describes itself
 /// in its description crate, named after the workspace with a `-synql`
 /// suffix, whose `DESCRIPTION` constant holds the text this type parses. A
-/// downstream generator depends on that crate, parses its own SQL on top of
+/// workspace written as a single crate with
+/// [`SynQLBuilder::single_crate`](crate::structs::SynQLBuilder::single_crate)
+/// carries the constant in that crate instead. A downstream generator
+/// depends on the crate holding the constant, parses its own SQL on top of
 /// [`sql`](Self::sql) and passes the description to
 /// [`SynQLBuilder::base`](crate::structs::SynQLBuilder::base). synql then
 /// generates only the downstream tables and enum types, whose crates depend
@@ -58,6 +64,10 @@ pub struct BaseWorkspace {
     /// Crates the workspace generated.
     #[serde(default)]
     crates: Vec<DescribedCrate>,
+    /// Whether the workspace is a single crate, which holds each enum type
+    /// in a module named after it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    single_crate: bool,
     /// The workspace this one was generated on top of.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     base: Option<Box<BaseWorkspace>>,
@@ -101,6 +111,9 @@ pub(crate) struct BaseCrates {
     tables: HashMap<String, TomlDependency>,
     /// Dependency on the crate holding each enum type, by qualified name.
     types: HashMap<String, TomlDependency>,
+    /// Names of the crates that each hold a whole workspace, with its enum
+    /// types in modules and its models behind the `models` feature.
+    single_crates: HashSet<String>,
 }
 
 impl BaseCrates {
@@ -114,6 +127,12 @@ impl BaseCrates {
     /// `qualified_name`, or `None` when the base holds no such type.
     pub(crate) fn enum_type(&self, qualified_name: &str) -> Option<&TomlDependency> {
         self.types.get(qualified_name)
+    }
+
+    /// Returns whether the crate `name` holds a whole workspace, written
+    /// with [`SynQLBuilder::single_crate`](crate::structs::SynQLBuilder::single_crate).
+    pub(crate) fn is_single_crate(&self, name: &str) -> bool {
+        self.single_crates.contains(name)
     }
 }
 
@@ -135,7 +154,21 @@ impl BaseWorkspace {
         crates: Vec<DescribedCrate>,
         base: Option<BaseWorkspace>,
     ) -> Self {
-        Self { name, version, git: None, sql, crates, base: base.map(Box::new) }
+        Self {
+            name,
+            version,
+            git: None,
+            sql,
+            crates,
+            single_crate: false,
+            base: base.map(Box::new),
+        }
+    }
+
+    /// Records that the workspace is a single crate.
+    pub(crate) fn single_crate(mut self) -> Self {
+        self.single_crate = true;
+        self
     }
 
     /// Returns the description as the TOML text [`FromStr`] parses.
@@ -210,6 +243,9 @@ impl BaseWorkspace {
                 }
                 for enum_type in &described.types {
                     crates.types.insert(enum_type.clone(), dependency.clone());
+                }
+                if level.single_crate {
+                    crates.single_crates.insert(described.name.clone());
                 }
             }
         }

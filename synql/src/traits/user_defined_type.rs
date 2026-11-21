@@ -58,8 +58,9 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
     }
 
     /// Returns the name of the crate holding the Rust enum of this type, made
-    /// of the workspace name, the schema and the type name, or which the base
-    /// workspace holds it in.
+    /// of the workspace name, the schema and the type name, or which is the
+    /// single crate named after the workspace, or which the base workspace
+    /// holds it in.
     ///
     /// Generation refuses a schema where this name, read as a Rust crate name,
     /// equals the one of a table crate or of another enum type crate.
@@ -84,6 +85,7 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
     fn enum_crate_name(&self, workspace: &Workspace) -> String {
         match workspace.base_type_crate(&self.qualified_name()) {
             Some(dependency) => dependency.name().to_owned(),
+            None if workspace.is_single_crate() => workspace.name().to_owned(),
             None => {
                 format!(
                     "{}-{}-{}",
@@ -93,6 +95,36 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
                 )
             }
         }
+    }
+
+    /// Returns the ident of the module holding the Rust enum of this type in
+    /// a single crate, made of the schema and the type name.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use sql_traits::prelude::*;
+    /// use sqlparser::dialect::PostgreSqlDialect;
+    /// use synql::prelude::*;
+    ///
+    /// let db = ParserDB::parse::<PostgreSqlDialect>(
+    ///     "CREATE SCHEMA authz; CREATE TYPE authz.team_role AS ENUM ('member'); CREATE TYPE mood AS ENUM ('sad');",
+    /// )
+    /// .expect("A valid schema");
+    /// let module_idents: Vec<String> =
+    ///     db.user_defined_types().map(|type_| type_.enum_module_ident().to_string()).collect();
+    /// assert_eq!(module_idents, ["public_mood", "authz_team_role"]);
+    /// ```
+    #[must_use]
+    fn enum_module_ident(&self) -> Ident {
+        Ident::new(
+            &format!(
+                "{}_{}",
+                self.schema_name().to_snake_case(),
+                self.stored_name().to_snake_case()
+            ),
+            proc_macro2::Span::call_site(),
+        )
     }
 
     /// Returns the ident of the crate holding the Rust enum of this type.
@@ -180,6 +212,9 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
     /// table crates, mapping the names of [`Self::enum_postgres_types`], or
     /// `None` when this is not an enum type.
     ///
+    /// The enum sits at the root of its own crate, or in the module
+    /// [`Self::enum_module_ident`] of a single crate.
+    ///
     /// # Panics
     ///
     /// Panics if the crate name is invalid.
@@ -187,10 +222,16 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
     fn enum_external_crate(&self, workspace: &Workspace) -> Option<ExternalCrate> {
         let variants = self.enum_variants()?;
         let crate_ident = self.enum_crate_ident(workspace);
+        let module: syn::Path = if workspace.is_enum_type_in_module(&self.qualified_name()) {
+            let module_ident = self.enum_module_ident();
+            syn::parse_quote!(::#crate_ident::#module_ident)
+        } else {
+            syn::parse_quote!(::#crate_ident)
+        };
         let enum_ident = self.enum_ident();
         let external_type = ExternalType::new(
-            syn::parse_quote!(::#crate_ident::sql_types::#enum_ident),
-            syn::parse_quote!(::#crate_ident::#enum_ident),
+            syn::parse_quote!(#module::sql_types::#enum_ident),
+            syn::parse_quote!(#module::#enum_ident),
         )
         .postgres_types(self.enum_postgres_types())
         .expect("The names of a type are distinct and lowercase")
@@ -216,8 +257,8 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
     }
 
     /// Returns the diesel SQL type of this type, to be placed in the
-    /// `sql_types` module at the root of its crate, or `None` when this is
-    /// not an enum type.
+    /// `sql_types` module next to [`Self::enum_tokens`], or `None` when this
+    /// is not an enum type.
     ///
     /// Behind the `sqlite` feature of the crate, the SQL type is also the
     /// SQLite `Text` holding the label.
@@ -241,14 +282,14 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
 
     /// Returns the Rust enum of this type with its conversions from and to
     /// PostgreSQL, and from and to SQLite behind the `sqlite` feature of its
-    /// crate, to be placed at the root of its crate, or `None` when this is
-    /// not an enum type.
+    /// crate, or `None` when this is not an enum type.
     ///
     /// Both backends exchange the label and refuse to read a label the type
     /// does not have.
     ///
-    /// The tokens reach the diesel SQL type through the `sql_types` module at
-    /// the root of the crate.
+    /// The tokens reach the diesel SQL type through the `sql_types` module
+    /// of the module they are placed in, at the root of an enum crate or in
+    /// the module [`Self::enum_module_ident`] of a single crate.
     #[must_use]
     fn enum_tokens(&self) -> Option<TokenStream> {
         let variants = self.enum_variants()?;
@@ -265,7 +306,7 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
             #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
             #[derive(::serde::Serialize, ::serde::Deserialize)]
             #[derive(::diesel::AsExpression, ::diesel::FromSqlRow)]
-            #[diesel(sql_type = crate::sql_types::#enum_ident)]
+            #[diesel(sql_type = self::sql_types::#enum_ident)]
             pub enum #enum_ident {
                 #(
                     #[serde(rename = #labels)]
@@ -273,7 +314,7 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
                 )*
             }
 
-            impl ::diesel::serialize::ToSql<crate::sql_types::#enum_ident, ::diesel::pg::Pg> for #enum_ident {
+            impl ::diesel::serialize::ToSql<self::sql_types::#enum_ident, ::diesel::pg::Pg> for #enum_ident {
                 fn to_sql<'b>(
                     &'b self,
                     out: &mut ::diesel::serialize::Output<'b, '_, ::diesel::pg::Pg>,
@@ -286,7 +327,7 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
                 }
             }
 
-            impl ::diesel::deserialize::FromSql<crate::sql_types::#enum_ident, ::diesel::pg::Pg> for #enum_ident {
+            impl ::diesel::deserialize::FromSql<self::sql_types::#enum_ident, ::diesel::pg::Pg> for #enum_ident {
                 fn from_sql(value: ::diesel::pg::PgValue<'_>) -> ::diesel::deserialize::Result<Self> {
                     match value.as_bytes() {
                         #(#byte_labels => Ok(Self::#variant_idents),)*
@@ -301,7 +342,7 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
             }
 
             #[cfg(feature = "sqlite")]
-            impl ::diesel::serialize::ToSql<crate::sql_types::#enum_ident, ::diesel::sqlite::Sqlite> for #enum_ident {
+            impl ::diesel::serialize::ToSql<self::sql_types::#enum_ident, ::diesel::sqlite::Sqlite> for #enum_ident {
                 fn to_sql<'b>(
                     &'b self,
                     out: &mut ::diesel::serialize::Output<'b, '_, ::diesel::sqlite::Sqlite>,
@@ -314,7 +355,7 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
             }
 
             #[cfg(feature = "sqlite")]
-            impl ::diesel::deserialize::FromSql<crate::sql_types::#enum_ident, ::diesel::sqlite::Sqlite> for #enum_ident {
+            impl ::diesel::deserialize::FromSql<self::sql_types::#enum_ident, ::diesel::sqlite::Sqlite> for #enum_ident {
                 fn from_sql(mut value: ::diesel::sqlite::SqliteValue<'_, '_, '_>) -> ::diesel::deserialize::Result<Self> {
                     match value.read_text() {
                         #(#labels => Ok(Self::#variant_idents),)*

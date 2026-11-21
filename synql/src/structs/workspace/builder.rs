@@ -29,6 +29,8 @@ pub struct WorkspaceBuilder {
     crate_tables: HashMap<String, String>,
     /// The crates of the base workspace holding its tables and enum types.
     base_crates: BaseCrates,
+    /// Whether the workspace is written as a single crate named after it.
+    single_crate: bool,
 }
 
 impl Default for WorkspaceBuilder {
@@ -44,6 +46,7 @@ impl Default for WorkspaceBuilder {
             repository: None,
             crate_tables: HashMap::new(),
             base_crates: BaseCrates::default(),
+            single_crate: false,
         }
     }
 }
@@ -143,6 +146,14 @@ impl WorkspaceBuilder {
     #[must_use]
     pub fn crate_tables(mut self, crate_tables: HashMap<String, String>) -> Self {
         self.crate_tables = crate_tables;
+        self
+    }
+
+    /// Writes the workspace as a single crate named after it, which holds
+    /// each table and enum type in its own module.
+    #[must_use]
+    pub fn single_crate(mut self) -> Self {
+        self.single_crate = true;
         self
     }
 
@@ -263,6 +274,7 @@ impl From<WorkspaceBuilder> for Workspace {
             repository: builder.repository,
             crate_tables: builder.crate_tables,
             base_crates: builder.base_crates,
+            single_crate: builder.single_crate,
         }
     }
 }

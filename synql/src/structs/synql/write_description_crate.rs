@@ -1,6 +1,9 @@
 //! Submodule implementing the writing of the crate describing the workspace,
 //! on top of which another schema is generated.
 
+use std::path::Path;
+
+use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::write_rust_file;
@@ -36,14 +39,6 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
                 vec![user_defined_type.qualified_name()],
             ));
         }
-        let (major, minor, patch) = workspace.version();
-        let description = BaseWorkspace::new(
-            workspace.name().to_owned(),
-            format!("{major}.{minor}.{patch}"),
-            sql.to_owned(),
-            crates,
-            self.base.clone(),
-        );
 
         let name = Self::description_crate_name(workspace);
         let crate_path = workspace.path().join(workspace.crate_base_path()).join(&name);
@@ -62,16 +57,42 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
                 )
             ),
         )?;
-        std::fs::write(crate_path.join(DESCRIPTION_FILE), description.to_toml())?;
+        self.write_description(sql, crates, workspace, &crate_path)?;
+        write_rust_file(&src_path.join("lib.rs"), Self::description_constant())
+    }
 
+    /// Writes, at the root of the crate at `crate_path`, the description of
+    /// the workspace holding `crates` and applying `sql` on top of its base.
+    pub(super) fn write_description(
+        &self,
+        sql: &str,
+        crates: Vec<DescribedCrate>,
+        workspace: &Workspace,
+        crate_path: &Path,
+    ) -> Result<(), crate::Error> {
+        let (major, minor, patch) = workspace.version();
+        let mut description = BaseWorkspace::new(
+            workspace.name().to_owned(),
+            format!("{major}.{minor}.{patch}"),
+            sql.to_owned(),
+            crates,
+            self.base.clone(),
+        );
+        if workspace.is_single_crate() {
+            description = description.single_crate();
+        }
+        std::fs::write(crate_path.join(DESCRIPTION_FILE), description.to_toml())?;
+        Ok(())
+    }
+
+    /// Returns the `DESCRIPTION` constant, which includes the description
+    /// at the root of its crate.
+    pub(super) fn description_constant() -> TokenStream {
         let description_path = format!("../{DESCRIPTION_FILE}");
-        write_rust_file(
-            &src_path.join("lib.rs"),
-            quote! {
-                /// The description of the workspace, which `synql` parses as a
-                /// `BaseWorkspace` to generate another schema on top of it.
-                pub const DESCRIPTION: &str = include_str!(#description_path);
-            },
-        )
+        quote! {
+            /// The description of the workspace, which `synql` parses as a
+            /// `BaseWorkspace` to generate another schema on top of it.
+            pub const DESCRIPTION: &str = include_str!(#description_path);
+        }
     }
 }

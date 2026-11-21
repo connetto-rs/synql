@@ -33,6 +33,39 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         );
         write!(buffer, "{}", workspace.package_section(&name, &description))?;
 
+        let mut workspace_dependencies = self.table_crate_dependencies(tables, &name, workspace)?;
+        writeln!(buffer, "\n[dependencies]")?;
+        for workspace_dependency in &workspace_dependencies {
+            writeln!(buffer, "{workspace_dependency}.workspace = true")?;
+        }
+
+        let callback_dependencies = self.callback_dependencies(tables, &workspace_dependencies)?;
+        for dependency in &callback_dependencies {
+            writeln!(buffer, "{dependency}")?;
+        }
+        workspace_dependencies.extend(
+            callback_dependencies
+                .iter()
+                .filter(|dependency| dependency.is_workspace())
+                .map(|dependency| dependency.name().to_owned()),
+        );
+
+        // Linting
+        writeln!(buffer, "\n[lints]")?;
+        writeln!(buffer, "workspace = true")?;
+
+        Ok(workspace_dependencies)
+    }
+
+    /// Returns the names of the workspace dependencies of the crate `name`
+    /// holding `tables`, which are the crates the generated code of the
+    /// tables uses, other than `name` itself.
+    pub(super) fn table_crate_dependencies(
+        &self,
+        tables: &[&DB::Table],
+        name: &str,
+        workspace: &Workspace,
+    ) -> Result<Vec<String>, crate::Error> {
         let mut workspace_dependencies: Vec<String> =
             ["serde", "diesel-builders", "diesel"].map(str::to_owned).into();
 
@@ -52,7 +85,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         for table in tables {
             for external_crate in table.external_crates(self.database, workspace)? {
                 let crate_name = external_crate.name();
-                if !["std", "core"].contains(&crate_name)
+                if !["std", "core", name].contains(&crate_name)
                     && !workspace_dependencies.iter().any(|declared| declared == crate_name)
                 {
                     workspace_dependencies.push(crate_name.to_owned());
@@ -70,37 +103,29 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
                 }
             }
         }
+        Ok(workspace_dependencies)
+    }
 
-        writeln!(buffer, "\n[dependencies]")?;
-        for workspace_dependency in &workspace_dependencies {
-            writeln!(buffer, "{workspace_dependency}.workspace = true")?;
-        }
-
+    /// Returns the dependencies the TOML callbacks add for `tables`, each
+    /// once and leaving out those named in `declared`.
+    pub(super) fn callback_dependencies(
+        &self,
+        tables: &[&DB::Table],
+        declared: &[String],
+    ) -> Result<Vec<TomlDependency>, crate::Error> {
         let mut callback_dependencies: Vec<TomlDependency> = Vec::new();
         for callback in &self.toml_callbacks {
             for table in tables {
                 if let Some(dependency) = callback(table, self.database)?
-                    && !workspace_dependencies.iter().any(|declared| declared == dependency.name())
+                    && !declared.iter().any(|name| name == dependency.name())
                     && !callback_dependencies
                         .iter()
-                        .any(|declared| declared.name() == dependency.name())
+                        .any(|callback_dependency| callback_dependency.name() == dependency.name())
                 {
-                    writeln!(buffer, "{dependency}")?;
                     callback_dependencies.push(dependency);
                 }
             }
         }
-        workspace_dependencies.extend(
-            callback_dependencies
-                .iter()
-                .filter(|dependency| dependency.is_workspace())
-                .map(|dependency| dependency.name().to_owned()),
-        );
-
-        // Linting
-        writeln!(buffer, "\n[lints]")?;
-        writeln!(buffer, "workspace = true")?;
-
-        Ok(workspace_dependencies)
+        Ok(callback_dependencies)
     }
 }

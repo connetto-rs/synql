@@ -152,6 +152,13 @@ impl TomlDependency {
         self
     }
 
+    /// Removes `feature` from the features the dependency enables.
+    #[must_use]
+    pub(crate) fn without_feature(mut self, feature: &str) -> Self {
+        self.features.retain(|enabled| enabled != feature);
+        self
+    }
+
     /// Sets whether the dependency is optional.
     #[must_use]
     pub fn optional(mut self, optional: bool) -> Self {
@@ -256,7 +263,11 @@ impl std::fmt::Display for TomlDependency {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.name)?;
 
-        if self.workspace {
+        if self.workspace
+            && self.features.is_empty()
+            && !self.optional
+            && self.default_features.is_none()
+        {
             write!(f, ".workspace = true")?;
             return Ok(());
         }
@@ -264,6 +275,10 @@ impl std::fmt::Display for TomlDependency {
         write!(f, " = {{ ")?;
 
         let mut parts = Vec::new();
+
+        if self.workspace {
+            parts.push("workspace = true".to_owned());
+        }
 
         if let Some(version) = &self.version {
             parts.push(format!("version = \"{version}\""));
@@ -355,6 +370,16 @@ mod tests {
     fn test_workspace() {
         let dep = TomlDependency::new("serde").workspace(true).unwrap();
         assert_eq!(dep.to_string(), "serde.workspace = true");
+    }
+
+    #[test]
+    fn test_optional_workspace_with_features() {
+        let dep =
+            TomlDependency::new("diesel").workspace(true).unwrap().feature("sqlite").optional(true);
+        assert_eq!(
+            dep.to_string(),
+            "diesel = { workspace = true, features = [\"sqlite\"], optional = true }"
+        );
     }
 
     #[test]

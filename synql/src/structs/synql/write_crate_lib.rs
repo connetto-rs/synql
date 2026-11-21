@@ -38,7 +38,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         for table in tables {
             let items = self.table_items(table, workspace)?;
             table_items.push(if tables.len() > 1 {
-                Self::table_module(table, &items)
+                Self::table_module(table, &items, &TokenStream::new())
             } else {
                 items
             });
@@ -52,21 +52,34 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         write_rust_file(&lib_rs_path, content)
     }
 
+    /// Returns the ident of the public module holding the items of `table`
+    /// in a crate holding several tables, named after the table with a
+    /// `_model` suffix.
+    pub(super) fn table_module_ident(table: &DB::Table) -> syn::Ident {
+        format_ident!("{}_model", table.table_snake_name())
+    }
+
     /// Wraps the `items` of `table` in a public `{table}_model` module, glob
-    /// re-exported at the crate root.
-    fn table_module(table: &DB::Table, items: &TokenStream) -> TokenStream {
-        let module_ident = format_ident!("{}_model", table.table_snake_name());
+    /// re-exported at the crate root, both under `attributes`.
+    pub(super) fn table_module(
+        table: &DB::Table,
+        items: &TokenStream,
+        attributes: &TokenStream,
+    ) -> TokenStream {
+        let module_ident = Self::table_module_ident(table);
         quote! {
+            #attributes
             pub mod #module_ident {
                 #items
             }
+            #attributes
             pub use #module_ident::*;
         }
     }
 
     /// Returns the items generated for `table`.
     #[allow(clippy::too_many_lines)]
-    fn table_items(
+    pub(super) fn table_items(
         &self,
         table: &DB::Table,
         workspace: &Workspace,

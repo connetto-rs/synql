@@ -10,13 +10,26 @@ use crate::{
     traits::SynQLDatabaseLike,
 };
 
+/// How a workspace splits its tables and enum types into crates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum CrateLayout {
+    /// Groups densely related tables into shared crates at the given
+    /// modularity resolution, and writes each enum type into its own crate.
+    Grouped(f64),
+    /// Writes each table and each enum type into its own crate.
+    PerTable,
+    /// Writes the whole workspace as a single crate named after it.
+    Single,
+}
+
 /// Struct to build `SynQL` instances.
 ///
 /// The built workspace groups densely related tables into shared crates at
 /// the standard modularity resolution `1.0`. Call
-/// [`group_tables`](Self::group_tables) to group at another resolution, or
+/// [`group_tables`](Self::group_tables) to group at another resolution,
 /// [`one_crate_per_table`](Self::one_crate_per_table) to generate a crate
-/// for each table.
+/// for each table, or [`single_crate`](Self::single_crate) to write the
+/// whole workspace as one crate. The last of these calls wins.
 pub struct SynQLBuilder<'db, DB: SynQLDatabaseLike> {
     database: &'db DB,
     path: &'db Path,
@@ -35,7 +48,7 @@ pub struct SynQLBuilder<'db, DB: SynQLDatabaseLike> {
     sink_crate_name: Option<String>,
     dag_sink_crate_prefix: Option<String>,
     external_crates: Vec<ExternalCrate>,
-    table_grouping_resolution: Option<f64>,
+    layout: CrateLayout,
     /// Additional workspace members.
     members: Vec<TomlDependency>,
     callbacks: Vec<Callback<'db, DB::Table, DB>>,
@@ -67,7 +80,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
             sink_crate_name: None,
             dag_sink_crate_prefix: None,
             external_crates: Vec::new(),
-            table_grouping_resolution: Some(1.0),
+            layout: CrateLayout::Grouped(1.0),
             members: Vec::new(),
             callbacks: Vec::new(),
             toml_callbacks: Vec::new(),
@@ -108,7 +121,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
 
     /// Records `sql` as the SQL this workspace applies on top of its base,
     /// or as the whole schema without a base, so that the workspace
-    /// describes itself in a crate named after it with a `-synql` suffix.
+    /// describes itself in a crate named after it with a `-synql` suffix,
+    /// or in its single crate with [`single_crate`](Self::single_crate).
     ///
     /// The `DESCRIPTION` constant of that crate holds the
     /// [`BaseWorkspace`] description through which another schema is
@@ -210,6 +224,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
     }
 
     /// Sets to generate a sink crate which imports all the table crates.
+    ///
+    /// A workspace written as a single crate refuses a sink crate.
     #[must_use]
     #[inline]
     pub fn sink_crate(mut self, sink_crate_name: &str) -> Self {
@@ -219,6 +235,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
 
     /// Sets whether to generate sink crates for each table DAG with a given
     /// prefix.
+    ///
+    /// A workspace written as a single crate refuses DAG sink crates.
     #[must_use]
     #[inline]
     pub fn dag_sink_crate_prefix(mut self, prefix: &str) -> Self {
@@ -246,11 +264,12 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
     /// through the module of its table.
     ///
     /// Call [`one_crate_per_table`](Self::one_crate_per_table) to generate a
-    /// crate for each table instead.
+    /// crate for each table, or [`single_crate`](Self::single_crate) to write
+    /// the whole workspace as one crate, instead.
     #[must_use]
     #[inline]
     pub fn group_tables(mut self, resolution: f64) -> Self {
-        self.table_grouping_resolution = Some(resolution);
+        self.layout = CrateLayout::Grouped(resolution);
         self
     }
 
@@ -260,7 +279,44 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
     #[must_use]
     #[inline]
     pub fn one_crate_per_table(mut self) -> Self {
-        self.table_grouping_resolution = None;
+        self.layout = CrateLayout::PerTable;
+        self
+    }
+
+    /// Writes the whole workspace as a single crate named after it, in place
+    /// of the crates of the tables, of the enum types and of the
+    /// description.
+    ///
+    /// The crate writes the items of each table into a public module named
+    /// after the table with a `_model` suffix, such as `users_model`, and
+    /// re-exports them from its root, as a crate grouping several tables
+    /// does with [`group_tables`](Self::group_tables). It writes each enum
+    /// type into a public module named after its schema and its name, such
+    /// as `authz_team_role` for `authz.team_role`, which it does not
+    /// re-export. Generation refuses a schema where the module of an enum
+    /// type shares its name with the module of another enum type, of a
+    /// table, or of the items of a table.
+    ///
+    /// With [`sql`](Self::sql) the crate carries the `DESCRIPTION`
+    /// constant, which is always compiled. The models, the items callbacks
+    /// return and the dependencies of both sit behind the default `models`
+    /// feature, so that a downstream generator depending on the crate with
+    /// `default-features = false` compiles only the description. The
+    /// default `sqlite` feature enables the SQLite conversions of the enum
+    /// types, of the column types and of the base crates, so that
+    /// `default-features = false, features = ["models"]` gives the models
+    /// without SQLite.
+    ///
+    /// The crate holds the whole workspace, so generation refuses a
+    /// [`sink_crate`](Self::sink_crate) or a
+    /// [`dag_sink_crate_prefix`](Self::dag_sink_crate_prefix), and the
+    /// [`sink_callback`](Self::sink_callback) and
+    /// [`sink_toml_callback`](Self::sink_toml_callback) callbacks apply to
+    /// the crate itself.
+    #[must_use]
+    #[inline]
+    pub fn single_crate(mut self) -> Self {
+        self.layout = CrateLayout::Single;
         self
     }
 
@@ -303,6 +359,10 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
 
     /// Registers a callback to generate additional dependencies for a given
     /// table.
+    ///
+    /// A workspace written as a [`single_crate`](Self::single_crate)
+    /// declares the dependency as optional and enables it with its `models`
+    /// feature.
     #[must_use]
     pub fn toml_callback<F>(mut self, callback: F) -> Self
     where
@@ -316,8 +376,10 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
     /// after its re-exports.
     ///
     /// The callback runs once per generation, and only when a sink crate is
-    /// set with [`sink_crate`](Self::sink_crate). It receives the tables
-    /// whose crates the sink crate re-exports, which are the tables neither
+    /// set with [`sink_crate`](Self::sink_crate) or the workspace is written
+    /// as a [`single_crate`](Self::single_crate), at whose root the code is
+    /// appended behind the `models` feature. It receives the tables whose
+    /// crates the sink crate re-exports, which are the tables neither
     /// denied, nor depending on a denied table, nor held by the base
     /// workspace.
     #[must_use]
@@ -333,7 +395,9 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
     /// sink crate.
     ///
     /// The callback runs once per generation, and only when a sink crate is
-    /// set with [`sink_crate`](Self::sink_crate).
+    /// set with [`sink_crate`](Self::sink_crate) or the workspace is written
+    /// as a [`single_crate`](Self::single_crate), which declares the
+    /// dependency as optional and enables it with its `models` feature.
     #[must_use]
     pub fn sink_toml_callback<F>(mut self, callback: F) -> Self
     where
@@ -365,7 +429,7 @@ impl<'db, DB: SynQLDatabaseLike> From<SynQLBuilder<'db, DB>> for SynQL<'db, DB> 
             sink_crate_name: builder.sink_crate_name,
             dag_sink_crate_prefix: builder.dag_sink_crate_prefix,
             external_crates: builder.external_crates,
-            table_grouping_resolution: builder.table_grouping_resolution,
+            layout: builder.layout,
             members: builder.members,
             callbacks: builder.callbacks,
             toml_callbacks: builder.toml_callbacks,
