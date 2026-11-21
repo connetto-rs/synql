@@ -2,7 +2,9 @@
 
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::structs::{ExternalCrate, Workspace, external_crate::MaximalNumberOfColumns};
+use crate::structs::{
+    BaseCrates, BaseWorkspace, ExternalCrate, Workspace, external_crate::MaximalNumberOfColumns,
+};
 
 /// Builder for the `Workspace` struct.
 pub struct WorkspaceBuilder {
@@ -21,6 +23,8 @@ pub struct WorkspaceBuilder {
     /// The snake-cased name of the table naming the crate of each table
     /// grouped with others.
     crate_tables: HashMap<String, String>,
+    /// The crates of the base workspace holding its tables and enum types.
+    base_crates: BaseCrates,
 }
 
 impl Default for WorkspaceBuilder {
@@ -33,6 +37,7 @@ impl Default for WorkspaceBuilder {
             version: (0, 1, 0),
             edition: 2024,
             crate_tables: HashMap::new(),
+            base_crates: BaseCrates::default(),
         }
     }
 }
@@ -117,6 +122,15 @@ impl WorkspaceBuilder {
     #[must_use]
     pub fn crate_tables(mut self, crate_tables: HashMap<String, String>) -> Self {
         self.crate_tables = crate_tables;
+        self
+    }
+
+    /// Sets the base workspace on top of which the workspace is generated,
+    /// whose tables and enum types its crates take from the crates of
+    /// `base`.
+    #[must_use]
+    pub fn base(mut self, base: &BaseWorkspace) -> Self {
+        self.base_crates = base.crates();
         self
     }
 
@@ -231,6 +245,7 @@ impl From<WorkspaceBuilder> for Workspace {
             version: builder.version,
             edition: builder.edition,
             crate_tables: builder.crate_tables,
+            base_crates: builder.base_crates,
         }
     }
 }

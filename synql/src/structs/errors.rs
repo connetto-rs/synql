@@ -117,6 +117,32 @@ pub enum Error {
         /// The parse error.
         source: syn::Error,
     },
+    #[error("The base workspace description does not parse: {0}")]
+    /// A base workspace description that is not the TOML synql writes.
+    InvalidBaseDescription(#[from] toml::de::Error),
+    #[error(
+        "Table `{0}` of the base workspace is missing from the schema, which must apply the base SQL first"
+    )]
+    /// A table of the base workspace that the schema does not hold, because
+    /// the schema was not parsed on top of the base SQL.
+    MissingBaseTable(String),
+    #[error(
+        "Type `{0}` of the base workspace is missing from the schema, which must apply the base SQL first"
+    )]
+    /// An enum type of the base workspace that the schema does not hold,
+    /// because the schema was not parsed on top of the base SQL.
+    MissingBaseType(String),
+    #[error(
+        "Table `{base_table}` of the base workspace depends on table `{generated_table}`, which its crate cannot reach"
+    )]
+    /// A table of the base workspace altered to depend on a table generated
+    /// on top of it, which the published base crate does not know.
+    BaseTableDependsOnGeneratedTable {
+        /// The table of the base workspace.
+        base_table: String,
+        /// The table generated on top of the base workspace.
+        generated_table: String,
+    },
 }
 
 /// SQL constructs of a check constraint that have no Rust translation.

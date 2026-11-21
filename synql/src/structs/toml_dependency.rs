@@ -13,6 +13,8 @@ pub struct TomlDependency {
     git: Option<String>,
     /// Branch of the git repository.
     branch: Option<String>,
+    /// Revision of the git repository.
+    rev: Option<String>,
     /// Features to enable.
     features: Vec<String>,
     /// Whether the dependency is optional.
@@ -33,6 +35,7 @@ impl TomlDependency {
             version: None,
             git: None,
             branch: None,
+            rev: None,
             features: Vec::new(),
             optional: false,
             workspace: false,
@@ -56,7 +59,9 @@ impl TomlDependency {
         Ok(self)
     }
 
-    /// Sets the git repository URL for the dependency.
+    /// Sets the git repository URL for the dependency, following `branch`
+    /// or, without one, the default branch until [`rev`](Self::rev) pins a
+    /// revision.
     ///
     /// # Errors
     ///
@@ -73,6 +78,28 @@ impl TomlDependency {
         }
         self.git = Some(git.into());
         self.branch = branch.map(Into::into);
+        self.rev = None;
+        Ok(self)
+    }
+
+    /// Pins the git repository of the dependency to the revision `rev`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the dependency has a git repository and no
+    /// branch.
+    pub fn rev(mut self, rev: impl Into<String>) -> Result<Self, Error> {
+        if self.git.is_none() {
+            return Err(Error::InvalidTomlDependency(
+                "Cannot set a revision for a dependency without git".to_string(),
+            ));
+        }
+        if self.branch.is_some() {
+            return Err(Error::InvalidTomlDependency(
+                "Cannot set both a branch and a revision".to_string(),
+            ));
+        }
+        self.rev = Some(rev.into());
         Ok(self)
     }
 
@@ -149,9 +176,9 @@ impl TomlDependency {
                     "Cannot set workspace to true when git is set".to_string(),
                 ));
             }
-            if self.branch.is_some() {
+            if self.branch.is_some() || self.rev.is_some() {
                 return Err(Error::InvalidTomlDependency(
-                    "Cannot set workspace to true when branch is set".to_string(),
+                    "Cannot set workspace to true when branch or rev is set".to_string(),
                 ));
             }
             if self.path.is_some() {
@@ -193,6 +220,7 @@ impl TomlDependency {
         self.version = None;
         self.git = None;
         self.branch = None;
+        self.rev = None;
         self.path = None;
         self
     }
@@ -218,6 +246,7 @@ impl TomlDependency {
         Some(Self {
             git: Some(self.git.clone()?),
             branch: self.branch.clone(),
+            rev: self.rev.clone(),
             ..Self::new(self.name.clone())
         })
     }
@@ -246,6 +275,10 @@ impl std::fmt::Display for TomlDependency {
 
         if let Some(branch) = &self.branch {
             parts.push(format!("branch = \"{branch}\""));
+        }
+
+        if let Some(rev) = &self.rev {
+            parts.push(format!("rev = \"{rev}\""));
         }
 
         if let Some(path) = &self.path {

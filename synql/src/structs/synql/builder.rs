@@ -6,7 +6,7 @@ use proc_macro2::TokenStream;
 
 use super::{Callback, SinkCallback, SinkTomlCallback, SynQL, TomlCallback};
 use crate::{
-    structs::{ExternalCrate, TomlDependency, Workspace},
+    structs::{BaseWorkspace, ExternalCrate, TomlDependency, Workspace},
     traits::SynQLDatabaseLike,
 };
 
@@ -24,6 +24,8 @@ pub struct SynQLBuilder<'db, DB: SynQLDatabaseLike> {
     clear_existing: bool,
     name: Option<String>,
     deny_list: Vec<&'db DB::Table>,
+    base: Option<BaseWorkspace>,
+    sql: Option<String>,
     version: (u8, u8, u8),
     edition: u16,
     generate_workspace_toml: bool,
@@ -52,6 +54,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
             clear_existing: false,
             name: None,
             deny_list: Vec::new(),
+            base: None,
+            sql: None,
             version: (0, 1, 0),
             edition: 2024,
             generate_workspace_toml: false,
@@ -81,6 +85,34 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
     #[inline]
     pub fn deny(mut self, table: &'db DB::Table) -> Self {
         self.deny_list.push(table);
+        self
+    }
+
+    /// Generates the workspace on top of the crates of `base`.
+    ///
+    /// The database must hold the schema parsed from the SQL of the base,
+    /// [`BaseWorkspace::sql`], followed by the SQL of this workspace. The
+    /// workspace generates the tables and enum types the base does not hold,
+    /// and its crates depend on the crates of the base for the others, at
+    /// the exact version the description of the base records.
+    #[must_use]
+    #[inline]
+    pub fn base(mut self, base: BaseWorkspace) -> Self {
+        self.base = Some(base);
+        self
+    }
+
+    /// Records `sql` as the SQL this workspace applies on top of its base,
+    /// or as the whole schema without a base, so that the workspace
+    /// describes itself in a crate named after it with a `-synql` suffix.
+    ///
+    /// The `DESCRIPTION` constant of that crate holds the
+    /// [`BaseWorkspace`] description through which another schema is
+    /// generated on top of this workspace.
+    #[must_use]
+    #[inline]
+    pub fn sql(mut self, sql: &str) -> Self {
+        self.sql = Some(sql.to_owned());
         self
     }
 
@@ -261,7 +293,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
     /// The callback runs once per generation, and only when a sink crate is
     /// set with [`sink_crate`](Self::sink_crate). It receives the tables
     /// whose crates the sink crate re-exports, which are the tables neither
-    /// denied nor depending on a denied table.
+    /// denied, nor depending on a denied table, nor held by the base
+    /// workspace.
     #[must_use]
     pub fn sink_callback<F>(mut self, callback: F) -> Self
     where
@@ -295,6 +328,9 @@ impl<'db, DB: SynQLDatabaseLike> From<SynQLBuilder<'db, DB>> for SynQL<'db, DB> 
             crate_base_path: builder.crate_base_path,
             name: builder.name,
             deny_list: builder.deny_list,
+            base_crates: builder.base.as_ref().map_or_else(Default::default, BaseWorkspace::crates),
+            base: builder.base,
+            sql: builder.sql,
             version: builder.version,
             edition: builder.edition,
             generate_workspace_toml: builder.generate_workspace_toml,

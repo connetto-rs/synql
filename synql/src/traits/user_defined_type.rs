@@ -58,7 +58,8 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
     }
 
     /// Returns the name of the crate holding the Rust enum of this type, made
-    /// of the workspace name, the schema and the type name.
+    /// of the workspace name, the schema and the type name, or which the base
+    /// workspace holds it in.
     ///
     /// Generation refuses a schema where this name, read as a Rust crate name,
     /// equals the one of a table crate or of another enum type crate.
@@ -81,12 +82,17 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
     /// ```
     #[must_use]
     fn enum_crate_name(&self, workspace: &Workspace) -> String {
-        format!(
-            "{}-{}-{}",
-            workspace.name(),
-            self.schema_name().to_snake_case(),
-            self.stored_name().to_snake_case()
-        )
+        match workspace.base_type_crate(&self.qualified_name()) {
+            Some(dependency) => dependency.name().to_owned(),
+            None => {
+                format!(
+                    "{}-{}-{}",
+                    workspace.name(),
+                    self.schema_name().to_snake_case(),
+                    self.stored_name().to_snake_case()
+                )
+            }
+        }
     }
 
     /// Returns the ident of the crate holding the Rust enum of this type.
@@ -113,17 +119,23 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
     }
 
     /// Returns the workspace dependency on the crate holding the Rust enum of
-    /// this type, with the `sqlite` feature of the crate enabled.
+    /// this type, a path into the workspace or the crate of the base
+    /// workspace, with the `sqlite` feature of the crate enabled.
     ///
     /// # Panics
     ///
     /// Panics if the path cannot be set.
     #[must_use]
     fn enum_crate_dependency(&self, workspace: &Workspace) -> TomlDependency {
-        TomlDependency::new(self.enum_crate_name(workspace))
-            .path(self.enum_crate_relative_path(workspace).display().to_string())
-            .expect("Should be able to set path")
-            .feature("sqlite")
+        let dependency = match workspace.base_type_crate(&self.qualified_name()) {
+            Some(dependency) => dependency.clone(),
+            None => {
+                TomlDependency::new(self.enum_crate_name(workspace))
+                    .path(self.enum_crate_relative_path(workspace).display().to_string())
+                    .expect("Should be able to set path")
+            }
+        };
+        dependency.feature("sqlite")
     }
 
     /// Returns the ident of the Rust enum of this type and of its diesel SQL

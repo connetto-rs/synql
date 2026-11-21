@@ -11,7 +11,9 @@ mod core_types;
 pub use builder::WorkspaceBuilder;
 use syn::Type;
 
-use crate::structs::{ExternalCrate, ExternalFunctionRef, ExternalTypeRef};
+use crate::structs::{
+    BaseCrates, ExternalCrate, ExternalFunctionRef, ExternalTypeRef, TomlDependency,
+};
 
 #[derive(Debug, Clone)]
 /// Struct defining a Cargo workspace.
@@ -31,6 +33,8 @@ pub struct Workspace {
     /// The snake-cased name of the table naming the crate of each table
     /// grouped with others.
     crate_tables: HashMap<String, String>,
+    /// The crates of the base workspace holding its tables and enum types.
+    base_crates: BaseCrates,
 }
 
 impl Workspace {
@@ -82,6 +86,24 @@ impl Workspace {
     /// it is grouped with others.
     pub fn crate_table_name<'name>(&'name self, table_snake_name: &'name str) -> &'name str {
         self.crate_tables.get(table_snake_name).map_or(table_snake_name, String::as_str)
+    }
+
+    #[inline]
+    #[must_use]
+    /// Returns the dependency on the crate of the base workspace holding the
+    /// table named `table_snake_name`, or `None` when the workspace
+    /// generates the table itself.
+    pub fn base_table_crate(&self, table_snake_name: &str) -> Option<&TomlDependency> {
+        self.base_crates.table(table_snake_name)
+    }
+
+    #[inline]
+    #[must_use]
+    /// Returns the dependency on the crate of the base workspace holding the
+    /// enum type named `qualified_name`, qualified by its schema, or `None`
+    /// when the workspace generates the type itself.
+    pub fn base_type_crate(&self, qualified_name: &str) -> Option<&TomlDependency> {
+        self.base_crates.enum_type(qualified_name)
     }
 
     /// Returns the external type ref corresponding to the provided Postgres
