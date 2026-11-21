@@ -231,10 +231,7 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
         } else {
             quote! { postgres_type(name = #stored_name) }
         };
-        let documentation =
-            format!("Diesel SQL type of the `{}` PostgreSQL enum type.", self.qualified_name());
         Some(quote! {
-            #[doc = #documentation]
             #[derive(Debug, Clone, Copy, ::diesel::query_builder::QueryId, ::diesel::sql_types::SqlType)]
             #[diesel(#postgres_type)]
             #[cfg_attr(feature = "sqlite", diesel(sqlite_type(name = "Text")))]
@@ -257,27 +254,20 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
         let variants = self.enum_variants()?;
         let enum_ident = self.enum_ident();
         let qualified_name = self.qualified_name();
-        let documentation = format!(
-            "Rust enum of the `{qualified_name}` PostgreSQL enum type, ordered as PostgreSQL orders its labels."
-        );
         let variant_idents: Vec<&Ident> = variants.iter().map(EnumVariant::ident).collect();
         let labels: Vec<&str> = variants.iter().map(EnumVariant::label).collect();
-        let variant_documentation: Vec<String> =
-            labels.iter().map(|label| format!("The `{label}` label.")).collect();
         let byte_labels: Vec<syn::LitByteStr> = labels
             .iter()
             .map(|label| syn::LitByteStr::new(label.as_bytes(), proc_macro2::Span::call_site()))
             .collect();
 
         Some(quote! {
-            #[doc = #documentation]
             #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
             #[derive(::serde::Serialize, ::serde::Deserialize)]
             #[derive(::diesel::AsExpression, ::diesel::FromSqlRow)]
             #[diesel(sql_type = crate::sql_types::#enum_ident)]
             pub enum #enum_ident {
                 #(
-                    #[doc = #variant_documentation]
                     #[serde(rename = #labels)]
                     #variant_idents,
                 )*

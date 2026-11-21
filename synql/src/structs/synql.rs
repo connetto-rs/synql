@@ -382,7 +382,6 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
         // Write [workspace.lints.rust] section
         writeln!(buffer, "[workspace.lints.rust]")?;
-        writeln!(buffer, "missing_docs = \"forbid\"")?;
         writeln!(buffer, "unused_macro_rules = \"forbid\"")?;
         writeln!(buffer, "unused_doc_comments = \"forbid\"")?;
         writeln!(buffer, "unconditional_recursion = \"forbid\"")?;
@@ -398,7 +397,6 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         writeln!(buffer, "bare_urls = \"forbid\"")?;
         writeln!(buffer, "invalid_codeblock_attributes = \"forbid\"")?;
         writeln!(buffer, "invalid_html_tags = \"forbid\"")?;
-        writeln!(buffer, "missing_crate_level_docs = \"forbid\"")?;
         writeln!(buffer, "unescaped_backticks = \"forbid\"")?;
         writeln!(buffer, "redundant_explicit_links = \"forbid\"")?;
         writeln!(buffer, "invalid_rust_codeblocks = \"forbid\"")?;
@@ -700,13 +698,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             for callback in &self.sink_callbacks {
                 sink_items.extend(callback(&sink_tables, self.database, &workspace)?);
             }
-            Self::write_sink_crate_lib(
-                &workspace,
-                sink_crate_name,
-                &sink_crate_path,
-                &sink_tables,
-                &sink_items,
-            )?;
+            Self::write_sink_crate_lib(&workspace, &sink_crate_path, &sink_tables, &sink_items)?;
             time_tracker.add_or_extend_completed_task(writing_sink_lib);
         }
 
@@ -748,13 +740,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
                 let writing_sink_lib =
                     Task::new(&format!("writing_sink_crate_lib_{sink_crate_name}"));
-                Self::write_sink_crate_lib(
-                    &workspace,
-                    &sink_crate_name,
-                    &sink_crate_path,
-                    &dag_tables,
-                    &[],
-                )?;
+                Self::write_sink_crate_lib(&workspace, &sink_crate_path, &dag_tables, &[])?;
                 time_tracker.add_or_extend_completed_task(writing_sink_lib);
             }
         }

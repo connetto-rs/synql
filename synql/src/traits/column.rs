@@ -596,16 +596,7 @@ pub trait ColumnSynLike: ColumnLike {
                     sql_type: self.data_type(database).name(database).into_owned(),
                 }
             })?;
-        let documentation = self.column_doc(database)?.map_or_else(
-            || {
-                format!(
-                    "Field representing the `{}` column in table `{}`.",
-                    self.column_name(),
-                    table.table_name()
-                )
-            },
-            ToString::to_string,
-        );
+        let documentation = self.column_doc(database)?.map(|doc| quote! { #[doc = #doc] });
         let rust_type = external_postgres_type.rust_type();
         let diesel_type = external_postgres_type.diesel_type();
         let mut sql_type_decorator = None;
@@ -630,7 +621,7 @@ pub trait ColumnSynLike: ColumnLike {
                 });
             }
             return Ok(quote! {
-                #[doc = #documentation]
+                #documentation
                 #[table_model(generated)]
                 #sql_type_decorator
                 #sql_name_decorator
@@ -670,7 +661,7 @@ pub trait ColumnSynLike: ColumnLike {
         };
 
         Ok(quote! {
-            #[doc = #documentation]
+            #documentation
             #(#vertical_same_as_decorators)*
             #(#horizontal_same_as_decorators)*
             #(#triangular_same_as_decorators)*

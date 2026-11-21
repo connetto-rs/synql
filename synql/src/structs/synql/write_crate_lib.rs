@@ -27,19 +27,12 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             .iter()
             .any(|table| !table.has_snake_case_table_name())
             .then(|| quote! { #![allow(non_snake_case)] });
-        let table_names: Vec<String> =
-            tables.iter().map(|table| format!("`{}`", table.table_name())).collect();
-        let (last, others) = table_names.split_last().expect("A crate holds at least one table");
-        let crate_documentation = if others.is_empty() {
-            format!("Auto-generated crate for the {last} table.")
-        } else {
-            format!("Auto-generated crate for the {} and {last} tables.", others.join(", "))
-        };
-        // The tables of a crate refer to each other through the crate name,
-        // as they do to the tables of other crates.
-        let self_alias = (tables.len() > 1).then(|| {
+        let multi_table_header = (tables.len() > 1).then(|| {
             let crate_ident = tables[0].crate_ident(workspace);
-            quote! { extern crate self as #crate_ident; }
+            quote! {
+                #![allow(ambiguous_glob_reexports, reason = "TableModel trait names can collide across tables")]
+                extern crate self as #crate_ident;
+            }
         });
         let mut table_items = Vec::with_capacity(tables.len());
         for table in tables {
@@ -53,34 +46,20 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
 
         let content = quote! {
             #allow_non_snake_case
-            #![doc=#crate_documentation]
-            #self_alias
+            #multi_table_header
             #(#table_items)*
         };
         write_rust_file(&lib_rs_path, content)
     }
 
-    /// Wraps the `items` of `table` in a public module, named after the
-    /// table with a `_model` suffix, whose items the crate root re-exports.
-    ///
-    /// The `TableModel` derive names the traits it generates by joining the
-    /// model and column names, so two tables of one crate can generate the
-    /// same trait name. The module keeps each table's items in its own
-    /// namespace, as a crate of its own would, and a colliding name is
-    /// reachable through the module of its table.
+    /// Wraps the `items` of `table` in a public `{table}_model` module, glob
+    /// re-exported at the crate root.
     fn table_module(table: &DB::Table, items: &TokenStream) -> TokenStream {
         let module_ident = format_ident!("{}_model", table.table_snake_name());
-        let module_documentation =
-            format!("Items generated for the `{}` table.", table.table_name());
         quote! {
-            #[doc=#module_documentation]
             pub mod #module_ident {
                 #items
             }
-            #[allow(
-                ambiguous_glob_reexports,
-                reason = "Tables of one crate can generate the same name, reachable through the module of each table"
-            )]
             pub use #module_ident::*;
         }
     }
@@ -93,13 +72,10 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         workspace: &Workspace,
     ) -> Result<TokenStream, crate::Error> {
         let core_derives = table.supported_core_derives(self.database, workspace)?;
-        let table_name = table.table_name();
         let camel_case_name = table.table_singular_camel_ident();
         let table_ident = table.table_ident();
-        let struct_documentation = table.table_doc(self.database)?.map_or_else(
-            || format!("Struct representing a row in the `{table_name}` table."),
-            ToString::to_string,
-        );
+        let struct_documentation =
+            table.table_doc(self.database)?.map(|doc| quote! { #[doc = #doc] });
 
         let mut ancestor_decorator = None;
         let ancestors = table.ancestral_extended_tables_topological(self.database)?;
@@ -201,7 +177,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             #[derive(#(#core_derives),*)]
             #[derive(::serde::Serialize, ::serde::Deserialize)]
             #[derive(::diesel::Queryable, ::diesel::Selectable, ::diesel::Identifiable, #derive_associations ::diesel_builders::prelude::TableModel)]
-            #[doc=#struct_documentation]
+            #struct_documentation
             #ancestor_decorator
             #error_decorator
             #record_error_decorator

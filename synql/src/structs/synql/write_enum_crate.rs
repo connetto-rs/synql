@@ -60,16 +60,9 @@ workspace = true
 "#
         );
         std::fs::write(crate_path.join("Cargo.toml"), cargo_toml)?;
-        let documentation = format!(
-            "Auto-generated crate for the PostgreSQL enum type `{}`.",
-            user_defined_type.qualified_name()
-        );
         let sql_type = user_defined_type.enum_sql_type_tokens();
         let enum_tokens = user_defined_type.enum_tokens();
         let content = quote! {
-            #![doc = #documentation]
-
-            /// Diesel SQL types of the crate.
             pub mod sql_types {
                 #sql_type
             }

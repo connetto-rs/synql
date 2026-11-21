@@ -16,7 +16,6 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
     /// `tables`, followed by `items`.
     pub(super) fn write_sink_crate_lib(
         workspace: &Workspace,
-        sink_crate_name: &str,
         sink_crate_path: &Path,
         tables: &[&DB::Table],
         items: &[TokenStream],
@@ -25,10 +24,6 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         let src_path = sink_crate_path.join("src");
         std::fs::create_dir_all(&src_path)?;
         let lib_rs_path = src_path.join("lib.rs");
-
-        let crate_documentation = format!(
-            "Auto-generated sink crate `{sink_crate_name}` which re-exports all table crates."
-        );
 
         let mut re_exports = Vec::new();
         let mut re_exported_crates = HashSet::new();
@@ -46,8 +41,6 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
         }
 
         let content = quote! {
-            #![doc = #crate_documentation]
-
             #(#re_exports)*
 
             #(#items)*
