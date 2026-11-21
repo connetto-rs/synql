@@ -6,6 +6,7 @@ pub(crate) use base_workspace::{BaseCrates, DescribedCrate};
 mod synql;
 pub use synql::{SynQL, SynQLBuilder};
 mod workspace;
+pub(crate) use workspace::toml_string;
 pub use workspace::{Workspace, WorkspaceBuilder};
 mod external_crate;
 pub use external_crate::{ExternalCrate, ExternalCrateBuilder};

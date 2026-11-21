@@ -30,6 +30,10 @@ pub struct Workspace {
     version: (u8, u8, u8),
     /// Edition of the workspace.
     edition: u16,
+    /// SPDX license expression every crate of the workspace inherits.
+    license: Option<String>,
+    /// URL of the repository every crate of the workspace inherits.
+    repository: Option<String>,
     /// The snake-cased name of the table naming the crate of each table
     /// grouped with others.
     crate_tables: HashMap<String, String>,
@@ -56,6 +60,53 @@ impl Workspace {
     #[must_use]
     pub fn edition(&self) -> u16 {
         self.edition
+    }
+
+    /// Returns the SPDX license expression every crate of the workspace
+    /// inherits, if any.
+    #[inline]
+    #[must_use]
+    pub fn license(&self) -> Option<&str> {
+        self.license.as_deref()
+    }
+
+    /// Returns the URL of the repository every crate of the workspace
+    /// inherits, if any.
+    #[inline]
+    #[must_use]
+    pub fn repository(&self) -> Option<&str> {
+        self.repository.as_deref()
+    }
+
+    /// Returns the `[package]` section of the manifest of the crate `name`
+    /// the workspace generates, at the version of the workspace, inheriting
+    /// its edition, license and repository, and described by `description`.
+    pub(crate) fn package_section(&self, name: &str, description: &str) -> String {
+        let (major, minor, patch) = self.version;
+        let mut section = format!(
+            "[package]\nname = \"{name}\"\nversion = \"{major}.{minor}.{patch}\"\nedition.workspace = true\n"
+        );
+        if self.license.is_some() {
+            section.push_str("license.workspace = true\n");
+        }
+        if self.repository.is_some() {
+            section.push_str("repository.workspace = true\n");
+        }
+        section.push_str("description = ");
+        section.push_str(&toml_string(description));
+        section.push('\n');
+        section
+    }
+
+    /// Returns the workspace dependency on the crate `name` the workspace
+    /// generates at `relative_path`, pinned at the version of the workspace
+    /// so that the crate packages for crates.io.
+    pub(crate) fn member_dependency(&self, name: String, relative_path: &Path) -> TomlDependency {
+        let (major, minor, patch) = self.version;
+        TomlDependency::new(name)
+            .version(format!("={major}.{minor}.{patch}"))
+            .and_then(|dependency| dependency.path(relative_path.display().to_string()))
+            .expect("A dependency which is not a workspace dependency takes a version and a path")
     }
 
     /// Returns the path where the workspace is being created.
@@ -192,4 +243,9 @@ impl Workspace {
 
         Ok(())
     }
+}
+
+/// Returns `text` as a TOML string, quoted and escaped.
+pub(crate) fn toml_string(text: &str) -> String {
+    toml::Value::String(text.to_owned()).to_string()
 }

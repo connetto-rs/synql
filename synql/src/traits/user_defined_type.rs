@@ -119,20 +119,18 @@ pub trait UserDefinedTypeSynLike: UserDefinedTypeLike {
     }
 
     /// Returns the workspace dependency on the crate holding the Rust enum of
-    /// this type, a path into the workspace or the crate of the base
-    /// workspace, with the `sqlite` feature of the crate enabled.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the path cannot be set.
+    /// this type, the crate of the base workspace or a path into the
+    /// workspace pinned at the version of the workspace, with the `sqlite`
+    /// feature of the crate enabled.
     #[must_use]
     fn enum_crate_dependency(&self, workspace: &Workspace) -> TomlDependency {
         let dependency = match workspace.base_type_crate(&self.qualified_name()) {
             Some(dependency) => dependency.clone(),
             None => {
-                TomlDependency::new(self.enum_crate_name(workspace))
-                    .path(self.enum_crate_relative_path(workspace).display().to_string())
-                    .expect("Should be able to set path")
+                workspace.member_dependency(
+                    self.enum_crate_name(workspace),
+                    &self.enum_crate_relative_path(workspace),
+                )
             }
         };
         dependency.feature("sqlite")

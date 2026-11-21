@@ -20,6 +20,10 @@ pub struct WorkspaceBuilder {
     version: (u8, u8, u8),
     /// Edition of the workspace.
     edition: u16,
+    /// SPDX license expression every crate of the workspace inherits.
+    license: Option<String>,
+    /// URL of the repository every crate of the workspace inherits.
+    repository: Option<String>,
     /// The snake-cased name of the table naming the crate of each table
     /// grouped with others.
     crate_tables: HashMap<String, String>,
@@ -36,6 +40,8 @@ impl Default for WorkspaceBuilder {
             crate_base_path: PathBuf::from("."),
             version: (0, 1, 0),
             edition: 2024,
+            license: None,
+            repository: None,
             crate_tables: HashMap::new(),
             base_crates: BaseCrates::default(),
         }
@@ -111,6 +117,21 @@ impl WorkspaceBuilder {
     #[must_use]
     pub fn edition(mut self, edition: u16) -> Self {
         self.edition = edition;
+        self
+    }
+
+    /// Sets the SPDX license expression, such as `MIT OR Apache-2.0`, that
+    /// every crate of the workspace inherits.
+    #[must_use]
+    pub fn license(mut self, license: &str) -> Self {
+        self.license = Some(license.to_owned());
+        self
+    }
+
+    /// Sets the URL of the repository every crate of the workspace inherits.
+    #[must_use]
+    pub fn repository(mut self, repository: &str) -> Self {
+        self.repository = Some(repository.to_owned());
         self
     }
 
@@ -238,6 +259,8 @@ impl From<WorkspaceBuilder> for Workspace {
             crate_base_path: builder.crate_base_path,
             version: builder.version,
             edition: builder.edition,
+            license: builder.license,
+            repository: builder.repository,
             crate_tables: builder.crate_tables,
             base_crates: builder.base_crates,
         }
