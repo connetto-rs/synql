@@ -1,14 +1,19 @@
 //! The generated `[workspace.dependencies]` declares a built-in crate only
-//! when a generated crate depends on it, while a crate registered with
-//! `SynQLBuilder::external_crate` stays declared for hand-written members.
+//! when a generated crate depends on it, a callback included, while a crate
+//! registered with `SynQLBuilder::external_crate` stays declared for
+//! hand-written members.
 
 use sql_traits::prelude::ParserDB;
 use sqlparser::dialect::PostgreSqlDialect;
 use synql::prelude::*;
 
 /// Generates the workspace of `schema` with an unused registered crate and
-/// returns the names `[workspace.dependencies]` declares.
-fn workspace_dependencies(schema: &str) -> Vec<String> {
+/// a sink crate, after `configure` adjusts the builder, and returns the names
+/// `[workspace.dependencies]` declares.
+fn workspace_dependencies(
+    schema: &str,
+    configure: impl for<'db> FnOnce(SynQLBuilder<'db, ParserDB>) -> SynQLBuilder<'db, ParserDB>,
+) -> Vec<String> {
     let db = ParserDB::parse::<PostgreSqlDialect>(schema).expect("Unable to parse the schema");
     let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
     let workspace_path = temp_dir.path().join("synql_workspace_dependencies");
@@ -17,12 +22,14 @@ fn workspace_dependencies(schema: &str) -> Vec<String> {
         .version("1.0")
         .expect("A valid version")
         .into();
-    let synql: SynQL<ParserDB> = SynQL::new(&db, &workspace_path)
-        .name("synql-workspace-dependencies")
-        .external_crate(registered)
-        .generate_workspace_toml()
-        .sink_crate("sink")
-        .into();
+    let synql: SynQL<ParserDB> = configure(
+        SynQL::new(&db, &workspace_path)
+            .name("synql-workspace-dependencies")
+            .external_crate(registered)
+            .generate_workspace_toml()
+            .sink_crate("sink"),
+    )
+    .into();
     synql.generate().expect("Unable to generate workspace");
 
     let manifest = std::fs::read_to_string(workspace_path.join("Cargo.toml"))
@@ -42,6 +49,7 @@ fn workspace_dependencies(schema: &str) -> Vec<String> {
 fn unused_built_in_crates_are_not_declared() {
     let dependencies = workspace_dependencies(
         "CREATE TABLE notes (id INT PRIMARY KEY, body TEXT NOT NULL CHECK (body <> ''));",
+        |builder| builder,
     );
     for unused in ["sqlitegis", "rosetta-time", "rosetta-utc", "rosetta-uuid", "serde_json"] {
         assert!(
@@ -61,6 +69,7 @@ fn unused_built_in_crates_are_not_declared() {
 fn built_in_crates_of_column_types_are_declared() {
     let dependencies = workspace_dependencies(
         "CREATE TABLE visits (id UUID PRIMARY KEY, day DATE NOT NULL, at TIMESTAMPTZ NOT NULL);",
+        |builder| builder,
     );
     for used in ["rosetta-time", "rosetta-utc", "rosetta-uuid"] {
         assert!(
@@ -72,4 +81,24 @@ fn built_in_crates_of_column_types_are_declared() {
         !dependencies.iter().any(|name| name == "sqlitegis"),
         "`sqlitegis` is declared but unused: {dependencies:?}"
     );
+}
+
+#[test]
+fn built_in_crates_of_callback_workspace_dependencies_are_declared() {
+    let dependencies =
+        workspace_dependencies("CREATE TABLE notes (id INT PRIMARY KEY);", |builder| {
+            builder
+                .toml_callback(|_table, _db| {
+                    Ok(Some(TomlDependency::new("serde_json").workspace(true)?))
+                })
+                .sink_toml_callback(|_db| {
+                    Ok(Some(TomlDependency::new("rosetta-time").workspace(true)?))
+                })
+        });
+    for used in ["serde_json", "rosetta-time"] {
+        assert!(
+            dependencies.iter().any(|name| name == used),
+            "`{used}` is not declared: {dependencies:?}"
+        );
+    }
 }
