@@ -362,14 +362,11 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
         // Write internal crate dependencies
         if workspace.is_single_crate() {
-            writeln!(
-                buffer,
-                "{}",
-                workspace.member_dependency(
-                    workspace.name().to_owned(),
-                    &Self::single_crate_relative_path(workspace)
-                )
-            )?;
+            let single_crate = workspace.member_dependency(
+                workspace.name().to_owned(),
+                &Self::single_crate_relative_path(workspace),
+            );
+            writeln!(buffer, "{single_crate}")?;
         } else {
             for tables in &crates {
                 writeln!(buffer, "{}", tables[0].crate_dependency(workspace))?;

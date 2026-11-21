@@ -2,8 +2,11 @@
 //! and enum type in its own module, carries the description of the workspace
 //! and puts its models behind its default `models` feature.
 
-use std::{path::Path, process::Command, str::FromStr};
+mod common;
 
+use std::{path::Path, str::FromStr};
+
+use common::{crate_directories, run};
 use quote::quote;
 use sql_traits::prelude::*;
 use sqlparser::dialect::PostgreSqlDialect;
@@ -22,6 +25,7 @@ CREATE TABLE memberships (
     user_id UUID NOT NULL REFERENCES users (id),
     role authz.team_role NOT NULL
 );
+CREATE TABLE \"Tags\" (id UUID PRIMARY KEY, label TEXT NOT NULL);
 ";
 
 const DOWNSTREAM_SQL: &str = "
@@ -30,6 +34,14 @@ CREATE TABLE notes (
     team_id UUID NOT NULL REFERENCES teams (id),
     role authz.team_role NOT NULL,
     body TEXT NOT NULL
+);
+";
+
+const TOP_SQL: &str = "
+CREATE TABLE remarks (
+    id UUID PRIMARY KEY,
+    note_id UUID NOT NULL REFERENCES notes (id),
+    mood mood NOT NULL
 );
 ";
 
@@ -52,36 +64,6 @@ pub use single::{Admin, Membership, Owner, admins, memberships, teams, users};
 pub const ADMIN: TeamRole = TeamRole::Admin;
 pub const DESCRIPTION: &str = single::DESCRIPTION;
 ";
-
-/// Runs `program` with `arguments` in `directory`, panicking with its output
-/// when it fails, and returns its standard output.
-fn run(program: &str, arguments: &[&str], directory: &Path) -> String {
-    let output = Command::new(program)
-        .args(arguments)
-        .current_dir(directory)
-        .output()
-        .unwrap_or_else(|error| panic!("Unable to run {program}: {error}"));
-    assert!(
-        output.status.success(),
-        "{program} {arguments:?} failed:\n{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).expect("UTF-8 output")
-}
-
-/// Returns the sorted directory names of the crates of the workspace at
-/// `path`.
-fn crate_directories(path: &Path) -> Vec<String> {
-    let mut directories: Vec<String> = std::fs::read_dir(path)
-        .expect("Unable to list the workspace")
-        .map(|entry| entry.expect("Unable to read a workspace entry"))
-        .filter(|entry| entry.path().join("Cargo.toml").exists())
-        .map(|entry| entry.file_name().into_string().expect("UTF-8 name"))
-        .collect();
-    directories.sort_unstable();
-    directories
-}
 
 /// Returns the packages the crate `package` of the workspace at `path`
 /// builds on with `features`, one per line.
@@ -159,6 +141,10 @@ fn a_single_crate_holds_the_whole_workspace() {
                 }
             }))
         })
+        .sink_callback(|_tables, _db, _workspace| Ok(None))
+        .sink_toml_callback(|_db| Ok(None))
+        .sink_toml_callback(|_db| Ok(Some(TomlDependency::new("serde_json").version("1.0")?)))
+        .sink_toml_callback(|_db| Ok(Some(TomlDependency::new("hex").version("0.4")?)))
         .into();
     synql.generate().expect("Unable to generate the workspace");
 
@@ -196,13 +182,14 @@ fn a_single_crate_holds_the_whole_workspace() {
     );
     assert!(postgres_models.contains("diesel v"), "{postgres_models}");
     assert!(postgres_models.contains("serde_json v"), "{postgres_models}");
+    assert!(postgres_models.contains("hex v"), "{postgres_models}");
     assert!(!postgres_models.contains("libsqlite3-sys"), "{postgres_models}");
     let default_models = dependency_tree(&workspace_path, "single", &[]);
     assert!(default_models.contains("libsqlite3-sys"), "{default_models}");
 }
 
 #[test]
-fn a_workspace_builds_on_a_single_crate_base() {
+fn single_crates_and_grouped_workspaces_build_on_each_other() {
     let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
     let base_path = temp_dir.path().join("base");
     let base = generate_single("base", SCHEMA, None, &base_path);
@@ -220,6 +207,11 @@ fn a_workspace_builds_on_a_single_crate_base() {
         .into();
     synql.generate().expect("Unable to generate the workspace");
     assert_eq!(crate_directories(&grouped_path), ["grouped-notes", "grouped-synql"]);
+    let grouped_description =
+        std::fs::read_to_string(grouped_path.join("grouped-synql/synql.toml"))
+            .expect("The grouped workspace writes its description crate");
+    let grouped = BaseWorkspace::from_str(&grouped_description).expect("The description parses");
+    let (grouped_url, grouped_revision) = commit(&grouped_path);
     let manifest = std::fs::read_to_string(grouped_path.join("Cargo.toml"))
         .expect("Unable to read the workspace manifest");
     let base_dependencies: Vec<&str> =
@@ -251,6 +243,19 @@ fn a_workspace_builds_on_a_single_crate_base() {
     assert!(!postgres_models.contains("libsqlite3-sys"), "{postgres_models}");
     let description_only = dependency_tree(&single_path, "downstream", &["--no-default-features"]);
     assert!(!description_only.contains("base v0.1.0"), "{description_only}");
+
+    let top_path = temp_dir.path().join("top");
+    let top = generate_single(
+        "top",
+        TOP_SQL,
+        Some(grouped.git(&grouped_url, &grouped_revision)),
+        &top_path,
+    );
+    assert_eq!(top.sql(), format!("{SCHEMA}{DOWNSTREAM_SQL}{TOP_SQL}"));
+    run("cargo", &["check", "--workspace", "--quiet"], &top_path);
+    let top_models = dependency_tree(&top_path, "top", &[]);
+    assert!(top_models.contains("grouped-notes v0.1.0"), "{top_models}");
+    assert!(top_models.contains("base v0.1.0"), "{top_models}");
 }
 
 #[test]
@@ -266,6 +271,75 @@ fn sink_crates_are_refused_in_a_single_crate() {
         let error = synql.generate().expect_err("A single crate has no sink crate");
         assert!(matches!(error, synql::Error::SinkCrateInSingleCrate), "Unexpected error: {error}");
     }
+}
+
+#[test]
+fn a_sink_callback_returning_statements_is_refused_in_a_single_crate() {
+    let database = ParserDB::parse::<PostgreSqlDialect>("CREATE TABLE users (id INT PRIMARY KEY);")
+        .expect("Unable to parse the schema");
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let synql: SynQL<ParserDB> = SynQL::new(&database, temp_dir.path())
+        .name("single")
+        .single_crate()
+        .sink_callback(|_tables, _db, _workspace| Ok(Some(quote! { let answer = 42; })))
+        .into();
+    match synql.generate() {
+        Err(synql::Error::UnparsableCode { path, .. }) => {
+            assert!(path.ends_with("single/src/lib.rs"), "{}", path.display());
+        }
+        other => panic!("Expected unparsable code, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_single_crate_of_enum_types_alone_builds_without_a_description() {
+    let database =
+        ParserDB::parse::<PostgreSqlDialect>("CREATE TYPE mood AS ENUM ('happy', 'sad');")
+            .expect("Unable to parse the schema");
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let workspace_path = temp_dir.path().join("moods");
+    let synql: SynQL<ParserDB> = SynQL::new(&database, &workspace_path)
+        .name("moods")
+        .single_crate()
+        .generate_workspace_toml()
+        .into();
+    synql.generate().expect("Unable to generate the workspace");
+
+    assert_eq!(crate_directories(&workspace_path), ["moods"]);
+    assert!(!workspace_path.join("moods/synql.toml").exists());
+    run("cargo", &["check", "--workspace", "--quiet"], &workspace_path);
+    let models = dependency_tree(&workspace_path, "moods", &[]);
+    assert!(models.contains("diesel v"), "{models}");
+    assert!(!models.contains("diesel-builders"), "{models}");
+}
+
+#[test]
+fn the_last_layout_call_decides_the_layout() {
+    let database =
+        ParserDB::parse::<PostgreSqlDialect>(SCHEMA).expect("Unable to parse the schema");
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let directories = |path: &Path, builder: SynQLBuilder<'_, ParserDB>| {
+        let synql: SynQL<ParserDB> = builder.into();
+        synql.generate().expect("Unable to generate the workspace");
+        crate_directories(path)
+    };
+
+    let grouped_path = temp_dir.path().join("grouped");
+    let grouped = directories(&grouped_path, SynQL::new(&database, &grouped_path).name("layout"));
+    assert!(grouped.len() > 1, "{grouped:?}");
+    let regrouped_path = temp_dir.path().join("regrouped");
+    let regrouped = directories(
+        &regrouped_path,
+        SynQL::new(&database, &regrouped_path).name("layout").single_crate().group_tables(1.0),
+    );
+    assert_eq!(regrouped, grouped);
+
+    let single_path = temp_dir.path().join("single");
+    let single = directories(
+        &single_path,
+        SynQL::new(&database, &single_path).name("layout").group_tables(1.0).single_crate(),
+    );
+    assert_eq!(single, ["layout"]);
 }
 
 #[test]
