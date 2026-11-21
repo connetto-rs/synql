@@ -176,9 +176,9 @@ impl TomlDependency {
                     "Cannot set workspace to true when git is set".to_string(),
                 ));
             }
-            if self.branch.is_some() || self.rev.is_some() {
+            if self.branch.is_some() {
                 return Err(Error::InvalidTomlDependency(
-                    "Cannot set workspace to true when branch or rev is set".to_string(),
+                    "Cannot set workspace to true when branch is set".to_string(),
                 ));
             }
             if self.path.is_some() {
@@ -416,5 +416,32 @@ mod tests {
             .unwrap();
         assert_eq!(git_only.crates_io_patch(), None);
         assert_eq!(TomlDependency::new("serde").version("1").unwrap().crates_io_patch(), None);
+    }
+
+    #[test]
+    fn test_git_rev() {
+        let dep = TomlDependency::new("base-users")
+            .version("=0.1.0")
+            .unwrap()
+            .git("https://github.com/connetto-rs/connetto-schema", None::<String>)
+            .unwrap()
+            .rev("49dd86e")
+            .unwrap();
+        assert_eq!(
+            dep.to_string(),
+            "base-users = { version = \"=0.1.0\", git = \"https://github.com/connetto-rs/connetto-schema\", rev = \"49dd86e\" }"
+        );
+    }
+
+    #[test]
+    fn test_rev_needs_git_without_branch() {
+        assert!(TomlDependency::new("base-users").rev("49dd86e").is_err());
+        assert!(
+            TomlDependency::new("base-users")
+                .git("https://github.com/connetto-rs/connetto-schema", Some("main"))
+                .unwrap()
+                .rev("49dd86e")
+                .is_err()
+        );
     }
 }

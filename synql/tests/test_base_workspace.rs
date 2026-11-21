@@ -180,6 +180,55 @@ fn a_base_table_missing_from_the_schema_is_refused() {
 }
 
 #[test]
+fn a_base_enum_type_missing_from_the_schema_is_refused() {
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let base = generate(
+        "base",
+        "CREATE TYPE mood AS ENUM ('happy', 'sad');\nCREATE TABLE users (id UUID PRIMARY KEY);",
+        None,
+        &temp_dir.path().join("base"),
+    );
+    let database =
+        ParserDB::parse::<PostgreSqlDialect>("CREATE TABLE users (id UUID PRIMARY KEY);")
+            .expect("Unable to parse the schema");
+    let downstream_path = temp_dir.path().join("downstream");
+    let synql: SynQL<ParserDB> = SynQL::new(&database, &downstream_path).base(base).into();
+
+    let error = synql.generate().expect_err("The base enum type is missing");
+    assert!(
+        matches!(&error, synql::Error::MissingBaseType(enum_type) if enum_type == "public.mood"),
+        "Unexpected error: {error}"
+    );
+}
+
+#[test]
+fn a_downstream_table_depends_on_its_spouse_in_the_base() {
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let base = generate(
+        "base",
+        "CREATE TABLE entities (id UUID PRIMARY KEY);\nCREATE TABLE accounts (id UUID PRIMARY KEY REFERENCES entities (id), login TEXT NOT NULL);",
+        None,
+        &temp_dir.path().join("base"),
+    );
+    let downstream_path = temp_dir.path().join("downstream");
+    generate(
+        "downstream",
+        "CREATE TABLE members (id UUID PRIMARY KEY REFERENCES entities (id), nickname TEXT NOT NULL);
+CREATE TABLE member_accounts (
+    id UUID PRIMARY KEY,
+    FOREIGN KEY (id) REFERENCES members (id),
+    FOREIGN KEY (id) REFERENCES accounts (id)
+);",
+        Some(base),
+        &downstream_path,
+    );
+
+    let manifest = std::fs::read_to_string(downstream_path.join("downstream-members/Cargo.toml"))
+        .expect("Unable to read the crate manifest");
+    assert!(manifest.contains("base-accounts.workspace = true"), "{manifest}");
+}
+
+#[test]
 fn a_base_table_altered_to_depend_on_a_downstream_table_is_refused() {
     let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
     let base = generate("base", BASE_SQL, None, &temp_dir.path().join("base"));
