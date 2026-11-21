@@ -1,8 +1,11 @@
 //! Tests for generating a schema on top of an already generated base
 //! workspace, which describes itself in its description crate.
 
-use std::{path::Path, process::Command, str::FromStr};
+mod common;
 
+use std::{path::Path, str::FromStr};
+
+use common::{crate_directories, run};
 use sql_traits::prelude::*;
 use sqlparser::dialect::PostgreSqlDialect;
 use synql::prelude::*;
@@ -22,23 +25,6 @@ CREATE TABLE notes (
 );
 CREATE TABLE documents (id UUID PRIMARY KEY REFERENCES resources (id), title TEXT NOT NULL);
 ";
-
-/// Runs `program` with `arguments` in `directory`, panicking with its output
-/// when it fails, and returns its standard output.
-fn run(program: &str, arguments: &[&str], directory: &Path) -> String {
-    let output = Command::new(program)
-        .args(arguments)
-        .current_dir(directory)
-        .output()
-        .unwrap_or_else(|error| panic!("Unable to run {program}: {error}"));
-    assert!(
-        output.status.success(),
-        "{program} {arguments:?} failed:\n{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).expect("UTF-8 output")
-}
 
 /// Generates the workspace `name` of `sql` at `path` on top of `base`, and
 /// returns the base description it writes.
@@ -60,19 +46,6 @@ fn generate(name: &str, sql: &str, base: Option<BaseWorkspace>, path: &Path) -> 
     let description = std::fs::read_to_string(path.join(format!("{name}-synql/synql.toml")))
         .expect("The workspace writes its description crate");
     BaseWorkspace::from_str(&description).expect("The description parses")
-}
-
-/// Returns the sorted directory names of the crates of the workspace at
-/// `path`.
-fn crate_directories(path: &Path) -> Vec<String> {
-    let mut directories: Vec<String> = std::fs::read_dir(path)
-        .expect("Unable to list the workspace")
-        .map(|entry| entry.expect("Unable to read a workspace entry"))
-        .filter(|entry| entry.path().join("Cargo.toml").exists())
-        .map(|entry| entry.file_name().into_string().expect("UTF-8 name"))
-        .collect();
-    directories.sort_unstable();
-    directories
 }
 
 #[test]
