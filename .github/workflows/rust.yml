@@ -17,16 +17,6 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  test:
-    name: Build
-    runs-on: ubuntu-26.04
-    steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: stable
-
   fmt:
     name: Rustfmt
     runs-on: ubuntu-26.04
@@ -48,10 +38,6 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libfontconfig1-dev
     - name: Run clippy
       run: cargo clippy --all-targets -- -D warnings
 
@@ -62,10 +48,6 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libfontconfig1-dev
     - name: Check documentation
       run: cargo doc --no-deps --document-private-items
       env:
@@ -87,10 +69,6 @@ jobs:
       uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
       with:
         tool: cargo-llvm-cov
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libfontconfig1-dev
     - name: Generate coverage
       run: |
         mkdir -p target/coverage
