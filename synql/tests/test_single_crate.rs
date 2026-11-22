@@ -65,6 +65,38 @@ pub const ADMIN: TeamRole = TeamRole::Admin;
 pub const DESCRIPTION: &str = single::DESCRIPTION;
 ";
 
+const MUTUAL_SQL: &str = "
+CREATE TABLE alpha (id INT PRIMARY KEY, beta_id INT);
+CREATE TABLE beta (id INT PRIMARY KEY, alpha_id INT REFERENCES alpha (id));
+ALTER TABLE alpha ADD FOREIGN KEY (beta_id) REFERENCES beta (id);
+";
+
+const JOINS_MANIFEST: &str = r#"[package]
+name = "joins"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+diesel.workspace = true
+mutual.workspace = true
+"#;
+
+const JOINS_LIB: &str = r"//! Joins the tables of the single crate, which reference each other.
+
+use diesel::prelude::*;
+use mutual::{alpha, beta};
+
+/// Builds a join along each of the two foreign keys.
+pub fn joins() {
+    let _alpha_with_beta = alpha::table
+        .inner_join(beta::table.on(alpha::beta_id.eq(beta::id.nullable())))
+        .select((alpha::id, beta::id));
+    let _beta_with_alpha = beta::table
+        .inner_join(alpha::table.on(beta::alpha_id.eq(alpha::id.nullable())))
+        .select((beta::id, alpha::id));
+}
+";
+
 /// Returns the packages the crate `package` of the workspace at `path`
 /// builds on with `features`, one per line.
 fn dependency_tree(path: &Path, package: &str, features: &[&str]) -> String {
@@ -360,4 +392,29 @@ fn an_enum_module_named_as_a_table_module_is_refused() {
         ),
         "Unexpected error: {error}"
     );
+}
+
+#[test]
+fn tables_referencing_each_other_build_in_a_single_crate() {
+    let database =
+        ParserDB::parse::<PostgreSqlDialect>(MUTUAL_SQL).expect("Unable to parse the schema");
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let workspace_path = temp_dir.path().join("mutual");
+    let synql: SynQL<ParserDB> = SynQL::new(&database, &workspace_path)
+        .name("mutual")
+        .single_crate()
+        .generate_workspace_toml()
+        .member(TomlDependency::new("joins").path("joins").expect("A valid path"))
+        .into();
+    synql.generate().expect("Unable to generate the workspace");
+
+    for (path, contents) in [("joins/Cargo.toml", JOINS_MANIFEST), ("joins/src/lib.rs", JOINS_LIB)]
+    {
+        let path = workspace_path.join(path);
+        std::fs::create_dir_all(path.parent().expect("A parent directory"))
+            .expect("Unable to create the directory");
+        std::fs::write(&path, contents).expect("Unable to write the file");
+    }
+
+    run("cargo", &["check", "--workspace", "--quiet"], &workspace_path);
 }

@@ -29,7 +29,9 @@ pub(super) enum CrateLayout {
 /// [`group_tables`](Self::group_tables) to group at another resolution,
 /// [`one_crate_per_table`](Self::one_crate_per_table) to generate a crate
 /// for each table, or [`single_crate`](Self::single_crate) to write the
-/// whole workspace as one crate. The last of these calls wins.
+/// whole workspace as one crate. The last of these calls wins. Only the
+/// single crate accepts tables which reference each other in a cycle, as
+/// the crates of such tables would depend on each other.
 pub struct SynQLBuilder<'db, DB: SynQLDatabaseLike> {
     database: &'db DB,
     path: &'db Path,
