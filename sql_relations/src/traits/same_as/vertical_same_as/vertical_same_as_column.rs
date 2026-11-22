@@ -15,7 +15,8 @@ where
     <Self::DB as DatabaseLike>::ForeignKey: VerticalSameAsForeignKeyLike<DB = Self::DB>,
 {
     /// Returns an iterator over the vertical same-as foreign keys in the host
-    /// table that reference this column.
+    /// table that reference this column, none for a primary key column, which
+    /// the extension foreign key already ties to the ancestor.
     ///
     /// # Arguments
     ///
@@ -48,8 +49,12 @@ where
     /// let age_column = child_table
     ///     .column("age", &db, IdentifierCase::AsWritten)?
     ///     .expect("Column 'age' should exist");
+    /// let id_column = child_table
+    ///     .column("id", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'id' should exist");
     /// assert_eq!(name_column.vertical_same_as_foreign_keys(&db)?.count(), 1);
     /// assert_eq!(age_column.vertical_same_as_foreign_keys(&db)?.count(), 1);
+    /// assert_eq!(id_column.vertical_same_as_foreign_keys(&db)?.count(), 0);
     /// # Ok(())
     /// # }
     /// ```
@@ -65,6 +70,9 @@ where
     {
         use crate::traits::same_as::vertical_same_as::vertical_same_as_table::VerticalSameAsTableLike;
         let mut foreign_keys = Vec::new();
+        if self.is_primary_key(database)? {
+            return Ok(foreign_keys.into_iter());
+        }
         for foreign_key in self.table(database).vertical_same_as_foreign_keys(database)? {
             for host_column in foreign_key.host_columns(database)? {
                 if host_column == self.borrow() {
@@ -77,7 +85,8 @@ where
     }
 
     /// Returns the set of columns that are directly vertically same-as this
-    /// column via vertical same-as foreign keys.
+    /// column via vertical same-as foreign keys, none for a primary key
+    /// column, which the extension foreign key already ties to the ancestor.
     ///
     /// # Arguments
     ///
@@ -118,8 +127,12 @@ where
     /// let parent_age_column = parent_table
     ///     .column("age", &db, IdentifierCase::AsWritten)?
     ///     .expect("Column 'age' should exist");
+    /// let id_column = child_table
+    ///     .column("id", &db, IdentifierCase::AsWritten)?
+    ///     .expect("Column 'id' should exist");
     /// assert_eq!(name_column.vertical_same_as_columns(&db)?, vec![parent_name_column]);
     /// assert_eq!(age_column.vertical_same_as_columns(&db)?, vec![parent_age_column]);
+    /// assert!(id_column.vertical_same_as_columns(&db)?.is_empty());
     /// # Ok(())
     /// # }
     /// ```
@@ -134,6 +147,9 @@ where
     ) -> Result<Vec<&'db <Self::DB as DatabaseLike>::Column>, LookupError> {
         use crate::traits::same_as::vertical_same_as::vertical_same_as_table::VerticalSameAsTableLike;
         let mut columns = Vec::new();
+        if self.is_primary_key(database)? {
+            return Ok(columns);
+        }
         for foreign_key in self.table(database).vertical_same_as_foreign_keys(database)? {
             for (host_column, referenced_column) in
                 foreign_key.host_columns(database)?.zip(foreign_key.referenced_columns(database)?)
