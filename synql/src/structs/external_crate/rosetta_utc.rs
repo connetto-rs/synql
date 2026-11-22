@@ -11,9 +11,9 @@ impl ExternalCrate {
     pub fn rosetta_utc() -> ExternalCrate {
         ExternalCrate::new("rosetta-utc")
             .unwrap()
-            .version("0.2.0")
+            .version("0.3.0")
             .unwrap()
-            .features(["diesel", "serde", "sqlite"])
+            .features(["diesel", "serde", "postgres", "sqlite"])
             .types([ExternalType::new(
                 syn::parse_quote!(::rosetta_utc::diesel_impls::TimestampUTC),
                 syn::parse_quote!(::rosetta_utc::TimestampUTC),

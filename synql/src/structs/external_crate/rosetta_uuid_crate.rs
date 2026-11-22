@@ -13,7 +13,7 @@ impl ExternalCrate {
             .unwrap()
             .version("0.2.0")
             .unwrap()
-            .features(["diesel", "serde", "sqlite"])
+            .features(["diesel", "serde", "postgres", "sqlite"])
             .types([ExternalType::new(
                 syn::parse_quote!(::rosetta_uuid::diesel_impls::Uuid),
                 syn::parse_quote!(::rosetta_uuid::Uuid),
