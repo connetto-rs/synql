@@ -146,6 +146,34 @@ fn test_one_crate_per_table() {
 }
 
 #[test]
+fn tables_referencing_each_other_are_refused_in_several_crates() {
+    let db = ParserDB::parse::<GenericDialect>(
+        "CREATE TABLE alpha (id INT PRIMARY KEY, beta_id INT);
+CREATE TABLE beta (id INT PRIMARY KEY, alpha_id INT REFERENCES alpha (id));
+ALTER TABLE alpha ADD FOREIGN KEY (beta_id) REFERENCES beta (id);",
+    )
+    .expect("Unable to parse the schema");
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let workspace_path = temp_dir.path().join("mutual");
+
+    for builder in [
+        SynQL::new(&db, &workspace_path).name("mutual"),
+        SynQL::new(&db, &workspace_path).name("mutual").one_crate_per_table(),
+    ] {
+        let synql: SynQL<ParserDB> = builder.into();
+        let error = synql.generate().expect_err("The crates would depend on each other");
+        assert!(
+            matches!(
+                error,
+                synql::Error::Schema(sql_traits::errors::Error::CyclicTableDependencies { .. })
+            ),
+            "Unexpected error: {error}"
+        );
+        assert!(!workspace_path.exists(), "No workspace is written");
+    }
+}
+
+#[test]
 fn test_grouped_tables_generation() {
     let db = ParserDB::parse::<GenericDialect>(SCHEMA).expect("Unable to parse the schema");
     let archived_settings = db

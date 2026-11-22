@@ -145,10 +145,10 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             }
         });
 
-        // Each table pair that diesel queries together is declared once, by
-        // the crate depending on the other, as `crate_dependencies` assigns.
+        // Each table pair that diesel queries together is declared once, as
+        // `joinable_tables` assigns.
         let mut allow_tables_to_appear_in_same_query = Vec::new();
-        for dependency in self.crate_dependencies(table)? {
+        for dependency in self.joinable_tables(table)? {
             let dependency_crate_ident = dependency.crate_ident(workspace);
             let dependency_table_ident = dependency.table_ident();
             allow_tables_to_appear_in_same_query.push(quote! {

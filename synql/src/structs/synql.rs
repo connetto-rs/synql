@@ -215,8 +215,8 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
     /// other, so that each pair gets a single owner and no crate cycle forms.
     /// A crate of the base workspace cannot depend on a generated crate, so
     /// the generated table owns its pair with a table of the base. The crate
-    /// of `table` also declares each of these tables as joinable with its
-    /// own.
+    /// of `table` declares the [`joinable_tables`](Self::joinable_tables)
+    /// among these as joinable with its own.
     ///
     /// # Errors
     ///
@@ -248,6 +248,38 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             }
         }
         Ok(dependencies)
+    }
+
+    /// Returns the tables which the crate of `table` declares as joinable
+    /// with its own, each pair of tables being declared once.
+    ///
+    /// These are the [`crate_dependencies`](Self::crate_dependencies) of
+    /// `table`. Two tables which depend on each other may each count the
+    /// other among their crate dependencies, and then only the smaller table
+    /// declares their pair. Such tables share the single crate, as the
+    /// layouts splitting the workspace into several crates refuse them. A
+    /// table of the base workspace may count a generated spouse among its
+    /// crate dependencies without depending on it, and as its crate is never
+    /// generated here the generated table declares their pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the related tables cannot be resolved.
+    fn joinable_tables<'a>(
+        &'a self,
+        table: &'a DB::Table,
+    ) -> Result<Vec<&'a DB::Table>, crate::Error> {
+        let mut joinable_tables = Vec::new();
+        for dependency in self.crate_dependencies(table)? {
+            if dependency < table
+                && dependency.depends_on(self.database, table)?
+                && self.crate_dependencies(dependency)?.contains(&table)
+            {
+                continue;
+            }
+            joinable_tables.push(dependency);
+        }
+        Ok(joinable_tables)
     }
 
     /// Writes the workspace TOML. `member_dependencies` holds the names of the
@@ -586,7 +618,9 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
     ///
     /// Returns an error if the workspace cannot be written to disk, if the
     /// schema cannot be resolved, if a column is a `TIMESTAMP` without
-    /// time zone, or if the schema does not extend the base workspace.
+    /// time zone, if the schema does not extend the base workspace, or if
+    /// tables reference each other in a cycle and the workspace is not a
+    /// [`single_crate`](SynQLBuilder::single_crate).
     pub fn generate(&self) -> Result<TimeTracker, crate::Error> {
         let single_crate = self.layout == CrateLayout::Single;
         if single_crate && (self.sink_crate_name.is_some() || self.dag_sink_crate_prefix.is_some())
@@ -633,7 +667,13 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
 
         let crate_tables = match self.layout {
             CrateLayout::Grouped(resolution) => self.grouped_crate_tables(resolution)?,
-            CrateLayout::PerTable | CrateLayout::Single => HashMap::new(),
+            CrateLayout::PerTable => {
+                // The crates of tables depending on each other would depend
+                // on each other.
+                self.database.table_dag()?;
+                HashMap::new()
+            }
+            CrateLayout::Single => HashMap::new(),
         };
         let mut workspace = Workspace::new()
             .path(self.path.to_path_buf())
