@@ -6,8 +6,8 @@
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use quote::{ToTokens, quote};
 use sql_relations::traits::{
-    HorizontalSameAsColumnLike, HorizontalSameAsForeignKeyLike, TriangularSameAsColumnLike,
-    TriangularSameAsForeignKeyLike, VerticalSameAsColumnLike,
+    HorizontalSameAsColumnLike, TriangularSameAsColumnLike, TriangularSameAsForeignKeyLike,
+    VerticalSameAsColumnLike,
 };
 use sql_traits::{
     errors::LookupError,
@@ -18,7 +18,7 @@ use syn::Ident;
 
 use crate::{
     structs::{ExternalTypeRef, Workspace},
-    traits::{CheckConstraintSynLike, TableSynLike},
+    traits::{CheckConstraintSynLike, ForeignKeySynLike, TableSynLike},
     utils::{is_reserved_diesel_keyword, is_reserved_rust_word},
 };
 
@@ -298,10 +298,7 @@ pub trait ColumnSynLike: ColumnLike {
         // column.
         let mut same_as_columns: Vec<(_, Vec<_>)> = Vec::new();
         for same_as in self.horizontal_same_as_foreign_keys(database)? {
-            if !same_as.is_horizontal_same_as_of_triangular(database)? {
-                continue;
-            }
-            let Some((key, pairs)) = same_as.horizontal_same_as_column_pairs(database)? else {
+            let Some((key, pairs)) = same_as.mirrored_column_pairs(database)? else {
                 continue;
             };
             // The key carries the mandatory or discretionary decorator instead.
