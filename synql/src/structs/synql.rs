@@ -629,7 +629,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         }
         self.check_base()?;
         let mut maximum_number_of_columns = 0;
-        let mut maximum_number_of_columns_in_hierarchy = 0;
+        let mut maximum_number_of_columns_in_builder = 0;
         for table in self.generated_tables()? {
             for column in table.columns(self.database)? {
                 let data_type = column.data_type(self.database);
@@ -650,20 +650,15 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
                     column.column_name().to_string(),
                 ));
             }
-            let number_of_columns = table.number_of_columns(self.database)?;
-            let mut number_of_columns_in_hierarchy = number_of_columns;
-            for ancestor_table in table.ancestral_extended_tables(self.database)? {
-                number_of_columns_in_hierarchy +=
-                    ancestor_table.number_of_columns(self.database)?;
-            }
-            maximum_number_of_columns = maximum_number_of_columns.max(number_of_columns);
-            maximum_number_of_columns_in_hierarchy =
-                maximum_number_of_columns_in_hierarchy.max(number_of_columns_in_hierarchy);
+            maximum_number_of_columns =
+                maximum_number_of_columns.max(table.number_of_columns(self.database)?);
+            maximum_number_of_columns_in_builder = maximum_number_of_columns_in_builder
+                .max(table.number_of_columns_in_builder(self.database)?);
         }
         let maximum_number_of_columns: MaximalNumberOfColumns =
             maximum_number_of_columns.try_into()?;
-        let maximum_number_of_columns_in_hierarchy: MaximalNumberOfColumns =
-            maximum_number_of_columns_in_hierarchy.try_into()?;
+        let maximum_number_of_columns_in_builder: MaximalNumberOfColumns =
+            maximum_number_of_columns_in_builder.try_into()?;
 
         let crate_tables = match self.layout {
             CrateLayout::Grouped(resolution) => self.grouped_crate_tables(resolution)?,
@@ -689,7 +684,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
             .serde_json()
             .validation_errors()
             .sqlitegis(maximum_number_of_columns)
-            .diesel_builders(maximum_number_of_columns_in_hierarchy)
+            .diesel_builders(maximum_number_of_columns_in_builder)
             .rosetta_uuid()
             .version(self.version.0, self.version.1, self.version.2)
             .edition(self.edition)

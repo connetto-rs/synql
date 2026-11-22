@@ -672,6 +672,82 @@ where
         }
         Ok(getters)
     }
+
+    /// Returns the number of columns of the widest tuple the
+    /// `diesel-builders` builder of this table flattens, which sets the
+    /// `size-*` feature the workspace needs.
+    ///
+    /// The builder flattens the columns of the table and of its extended
+    /// ancestors into one tuple. It flattens the columns of the tables its
+    /// mandatory triangular same-as keys reference into another, one copy of
+    /// a referenced table per key, and those of its discretionary keys into a
+    /// third. The ancestors of a referenced table are not part of these
+    /// tuples.
+    ///
+    /// # Arguments
+    ///
+    /// * `database` - The database where the table is defined.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use sql_traits::prelude::*;
+    /// use sqlparser::dialect::GenericDialect;
+    /// use synql::prelude::*;
+    /// let db = ParserDB::parse::<GenericDialect>(
+    ///     "
+    /// CREATE TABLE templates (id INT PRIMARY KEY);
+    /// CREATE TABLE slots (
+    ///     id INT PRIMARY KEY,
+    ///     template_id INT NOT NULL REFERENCES templates (id),
+    ///     note TEXT,
+    ///     UNIQUE (id, template_id)
+    /// );
+    /// CREATE TABLE disposals (
+    ///     id INT PRIMARY KEY REFERENCES templates (id),
+    ///     from_slot_id INT NOT NULL REFERENCES slots (id),
+    ///     into_slot_id INT NOT NULL REFERENCES slots (id),
+    ///     FOREIGN KEY (from_slot_id, id) REFERENCES slots (id, template_id),
+    ///     FOREIGN KEY (into_slot_id, id) REFERENCES slots (id, template_id)
+    /// );",
+    /// )
+    /// .expect("Unable to parse the schema");
+    /// let disposals = db
+    ///     .table_by_target(TargetName::new("disposals", false), IdentifierCase::AsWritten)
+    ///     .expect("Resolvable tables")
+    ///     .expect("The disposals table");
+    /// // Two copies of the three columns of `slots` outnumber the four columns
+    /// // of `disposals` and `templates`.
+    /// assert_eq!(disposals.number_of_columns_in_builder(&db).expect("Resolvable keys"), 6);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the ancestors, the foreign keys or the
+    /// tables they reference cannot be resolved.
+    fn number_of_columns_in_builder(&self, database: &Self::DB) -> Result<usize, LookupError> {
+        let mut number_of_columns_in_hierarchy = self.number_of_columns(database)?;
+        for ancestor_table in self.ancestral_extended_tables(database)? {
+            number_of_columns_in_hierarchy += ancestor_table.number_of_columns(database)?;
+        }
+        let mut number_of_mandatory_columns = 0;
+        let mut number_of_discretionary_columns = 0;
+        for foreign_key in self.foreign_keys(database)? {
+            let Some(triangular) = foreign_key.triangular_same_as(database)? else {
+                continue;
+            };
+            let number_of_columns =
+                foreign_key.referenced_table(database)?.number_of_columns(database)?;
+            if triangular.is_mandatory() {
+                number_of_mandatory_columns += number_of_columns;
+            } else {
+                number_of_discretionary_columns += number_of_columns;
+            }
+        }
+        Ok(number_of_columns_in_hierarchy
+            .max(number_of_mandatory_columns)
+            .max(number_of_discretionary_columns))
+    }
 }
 
 impl<T: TableLike> TableSynLike for T where <T::DB as DatabaseLike>::Column: ColumnSynLike {}

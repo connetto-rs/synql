@@ -85,6 +85,60 @@ CREATE TABLE aliquotings (
 }
 
 #[test]
+fn mandatory_slot_builders_wider_than_any_hierarchy_compile() {
+    assert_clippy_accepts(
+        "
+CREATE TABLE templates (id INT PRIMARY KEY);
+CREATE TABLE models (id INT PRIMARY KEY);
+CREATE TABLE slots (
+    id INT PRIMARY KEY,
+    template_id INT NOT NULL REFERENCES templates (id),
+    model_id INT NOT NULL REFERENCES models (id),
+    extra_0 INT, extra_1 INT, extra_2 INT, extra_3 INT, extra_4 INT, extra_5 INT,
+    UNIQUE (id, template_id, model_id)
+);
+CREATE TABLE disposals (
+    id INT PRIMARY KEY REFERENCES templates (id),
+    slot_0_id INT NOT NULL, model_0_id INT NOT NULL REFERENCES models (id),
+    slot_1_id INT NOT NULL, model_1_id INT NOT NULL REFERENCES models (id),
+    slot_2_id INT NOT NULL, model_2_id INT NOT NULL REFERENCES models (id),
+    slot_3_id INT NOT NULL, model_3_id INT NOT NULL REFERENCES models (id),
+    FOREIGN KEY (slot_0_id, id, model_0_id) REFERENCES slots (id, template_id, model_id),
+    FOREIGN KEY (slot_1_id, id, model_1_id) REFERENCES slots (id, template_id, model_id),
+    FOREIGN KEY (slot_2_id, id, model_2_id) REFERENCES slots (id, template_id, model_id),
+    FOREIGN KEY (slot_3_id, id, model_3_id) REFERENCES slots (id, template_id, model_id)
+);",
+    );
+}
+
+#[test]
+fn discretionary_slot_builders_wider_than_any_hierarchy_compile() {
+    assert_clippy_accepts(
+        "
+CREATE TABLE templates (id INT PRIMARY KEY);
+CREATE TABLE models (id INT PRIMARY KEY);
+CREATE TABLE slots (
+    id INT PRIMARY KEY,
+    template_id INT NOT NULL REFERENCES templates (id),
+    model_id INT NOT NULL REFERENCES models (id),
+    extra_0 INT, extra_1 INT, extra_2 INT, extra_3 INT, extra_4 INT, extra_5 INT,
+    UNIQUE (id, model_id)
+);
+CREATE TABLE disposals (
+    id INT PRIMARY KEY REFERENCES templates (id),
+    slot_0_id INT NOT NULL, model_0_id INT NOT NULL REFERENCES models (id),
+    slot_1_id INT NOT NULL, model_1_id INT NOT NULL REFERENCES models (id),
+    slot_2_id INT NOT NULL, model_2_id INT NOT NULL REFERENCES models (id),
+    slot_3_id INT NOT NULL, model_3_id INT NOT NULL REFERENCES models (id),
+    FOREIGN KEY (slot_0_id, model_0_id) REFERENCES slots (id, model_id),
+    FOREIGN KEY (slot_1_id, model_1_id) REFERENCES slots (id, model_id),
+    FOREIGN KEY (slot_2_id, model_2_id) REFERENCES slots (id, model_id),
+    FOREIGN KEY (slot_3_id, model_3_id) REFERENCES slots (id, model_id)
+);",
+    );
+}
+
+#[test]
 fn consecutive_record_checks_are_not_mistaken_for_a_missing_else() {
     assert_clippy_accepts(
         "
