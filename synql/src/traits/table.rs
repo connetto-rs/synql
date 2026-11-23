@@ -466,6 +466,61 @@ where
             .collect::<Vec<_>>())
     }
 
+    /// Generates the decorators writing into the extended ancestors of this
+    /// table the discriminators its extension keys, and those of its
+    /// ancestors, fix to a constant. A key `ownables (id, kind)` referencing
+    /// `resources (id, kind)`, with `ownables.kind` generated as `'ownable'`,
+    /// writes `ResourceKind::Ownable` into `resources.kind` from the builders
+    /// of `ownables` and of every table extending it.
+    ///
+    /// A `default(...)` applies only to the builder of the table declaring
+    /// it, so each descendant repeats the decorators of its ancestors. A
+    /// referenced column that is generated in turn is left to the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `database` - The database where the table is defined.
+    /// * `workspace` - The workspace where the table is defined.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::UnsupportedDiscriminator`] when a constant has
+    /// no value of the Rust type of its column, and a lookup error when the
+    /// ancestors or their extension keys cannot be resolved.
+    fn ancestral_discriminator_decorators(
+        &self,
+        database: &Self::DB,
+        workspace: &Workspace,
+    ) -> Result<Vec<proc_macro2::TokenStream>, crate::Error> {
+        let mut extension_keys: Vec<_> = self.extension_foreign_keys(database)?.collect();
+        for ancestor in self.ancestral_extended_tables(database)? {
+            extension_keys.extend(ancestor.extension_foreign_keys(database)?);
+        }
+        let mut decorators = Vec::new();
+        for foreign_key in extension_keys {
+            let referenced_table = foreign_key.referenced_table(database)?;
+            let referenced_table_ident = referenced_table.table_ident();
+            let referenced_table_crate = referenced_table.crate_ident(workspace);
+            for (column, constant) in foreign_key.referenced_constants(database)? {
+                if column.generation_expression().is_some() {
+                    continue;
+                }
+                let Some(value) = column.constant_value(constant, workspace, database) else {
+                    return Err(crate::Error::UnsupportedDiscriminator {
+                        foreign_key: foreign_key_signature(foreign_key, database)?,
+                        column_name: column.column_name().to_owned(),
+                        constant: constant.to_string(),
+                    });
+                };
+                let column_ident = column.column_snake_ident();
+                decorators.push(quote! {
+                    #[table_model(default(#referenced_table_crate::#referenced_table_ident::#column_ident, #value))]
+                });
+            }
+        }
+        Ok(decorators)
+    }
+
     /// Returns the decorators for the foreign keys of this table, excluding
     /// those which are not already handled by same-as relations.
     ///
@@ -752,3 +807,21 @@ where
 }
 
 impl<T: TableLike> TableSynLike for T where <T::DB as DatabaseLike>::Column: ColumnSynLike {}
+
+/// Spells `foreign_key` as `host (columns) REFERENCES referenced (columns)`,
+/// which names it whether or not the schema gave it a name.
+fn foreign_key_signature<DB: DatabaseLike>(
+    foreign_key: &DB::ForeignKey,
+    database: &DB,
+) -> Result<String, LookupError> {
+    fn column_list<'db, C: ColumnLike + 'db>(columns: impl Iterator<Item = &'db C>) -> String {
+        columns.map(ColumnLike::column_name).collect::<Vec<_>>().join(", ")
+    }
+    Ok(format!(
+        "{} ({}) REFERENCES {} ({})",
+        foreign_key.host_table(database).table_name(),
+        column_list(foreign_key.host_columns(database)?),
+        foreign_key.referenced_table(database)?.table_name(),
+        column_list(foreign_key.referenced_columns(database)?),
+    ))
+}

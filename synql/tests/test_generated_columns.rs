@@ -101,18 +101,11 @@ fn connection() -> SqliteConnection {
 #[test]
 fn the_builder_leaves_the_generated_column_to_the_database() {
     let mut connection = connection();
-    let id = rosetta_uuid::Uuid::new_v4();
-    grantees::table::builder()
-        .id(id)
-        .kind(GranteeKind::Link)
-        .insert(&mut connection)
-        .expect("insert the grantee");
-    let share_link = share_links::table::builder()
-        .id(id)
+    let share_link = SetGranteeId::id(share_links::table::builder(), rosetta_uuid::Uuid::new_v4())
         .try_token_hash(vec![0; 32])
         .expect("a 32 byte hash")
         .insert(&mut connection)
-        .expect("insert the share link without writing its kind");
+        .expect("insert the grantee and the share link without writing either kind");
     assert_eq!(share_link.get_column_ref::<share_links::kind>(), &GranteeKind::Link);
 }
 
