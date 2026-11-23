@@ -81,7 +81,9 @@ fn a_check_that_is_not_a_predicate_is_unsupported() {
         UnsupportedCheck::Expression(_)
     ));
     assert!(matches!(
-        unsupported_reason("CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (a <> NULL));"),
+        unsupported_reason(
+            "CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (a <> NULL AND a > 0));"
+        ),
         UnsupportedCheck::Expression(_)
     ));
 }
@@ -89,7 +91,9 @@ fn a_check_that_is_not_a_predicate_is_unsupported() {
 #[test]
 fn numbers_need_a_typed_operand() {
     assert!(matches!(
-        unsupported_reason("CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (1 < 2 OR a > 0));"),
+        unsupported_reason(
+            "CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (1 < 2 AND a > 0));"
+        ),
         UnsupportedCheck::UntypedNumber(number) if number == "1"
     ));
     assert!(matches!(
