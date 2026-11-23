@@ -1,6 +1,7 @@
-//! `NOT NULL` columns keyed to a nullable column of a triangle's satellite
-//! insert through their builder, whether the key is wider than two columns or
-//! not.
+//! A `NOT NULL` column keyed to a nullable column of a triangle's satellite
+//! takes the satellite's value when the satellite holds one and stays for the
+//! caller to set when it holds `NULL`, whether the key is wider than two
+//! columns or not.
 //!
 //! The test generates a workspace, adds a crate of assertions over the
 //! generated code, and runs the assertions with `cargo test` on SQLite.
@@ -106,6 +107,20 @@ fn connection() -> SqliteConnection {
 }
 
 #[test]
+fn the_storage_takes_the_slot_its_asset_is_placed_into() {
+    let builder = storages::table::builder()
+        .stored_asset_slot(slots::table::builder().id(11).placed_into_slot_id(Some(10)));
+    assert_eq!(builder.may_get_column::<storages::stored_into_slot_id>(), Some(10));
+}
+
+#[test]
+fn an_unplaced_asset_leaves_the_storage_slot_to_the_caller() {
+    let builder = storages::table::builder()
+        .stored_asset_slot(slots::table::builder().id(11).placed_into_slot_id(None));
+    assert_eq!(builder.may_get_column::<storages::stored_into_slot_id>(), None);
+}
+
+#[test]
 fn the_storage_inserts_into_the_slot_its_asset_is_placed_into() {
     let mut connection = connection();
     let storage = SetTemplateId::id(storages::table::builder(), 1)
@@ -119,7 +134,21 @@ fn the_storage_inserts_into_the_slot_its_asset_is_placed_into() {
 }
 
 #[test]
-fn the_retrieval_keeps_its_two_column_key_to_the_slot_its_asset_is_placed_into() {
+fn the_retrieval_takes_the_slot_its_asset_is_placed_into() {
+    let builder = retrievals::table::builder()
+        .retrieved_asset_slot(slots::table::builder().id(21).placed_into_slot_id(Some(20)));
+    assert_eq!(builder.may_get_column::<retrievals::retrieved_from_slot_id>(), Some(20));
+}
+
+#[test]
+fn an_unplaced_asset_leaves_the_retrieval_slot_to_the_caller() {
+    let builder = retrievals::table::builder()
+        .retrieved_asset_slot(slots::table::builder().id(21).placed_into_slot_id(None));
+    assert_eq!(builder.may_get_column::<retrievals::retrieved_from_slot_id>(), None);
+}
+
+#[test]
+fn the_retrieval_inserts_from_the_slot_its_asset_is_placed_into() {
     let mut connection = connection();
     let retrieval = SetTemplateId::id(retrievals::table::builder(), 2)
         .retrieved_from_slot(slots::table::builder().id(20))
@@ -133,7 +162,7 @@ fn the_retrieval_keeps_its_two_column_key_to_the_slot_its_asset_is_placed_into()
 "#;
 
 #[test]
-fn not_null_columns_keyed_to_a_nullable_satellite_column_insert() {
+fn not_null_columns_keyed_to_a_nullable_satellite_column_mirror_it() {
     let db = ParserDB::parse::<PostgreSqlDialect>(SCHEMA).expect("Unable to parse the schema");
     let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
     let workspace_path = temp_dir.path().join("demo");

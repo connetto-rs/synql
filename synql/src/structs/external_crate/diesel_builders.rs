@@ -19,13 +19,15 @@ impl MaximalNumberOfColumns {
 
 impl ExternalCrate {
     /// Returns `ExternalCrate` instance describing the
-    /// `diesel-builders` crate.
+    /// `diesel-builders` crate, with the insert paths of both backends the
+    /// generated crates support.
     #[must_use]
     pub fn diesel_builders(number_of_columns: MaximalNumberOfColumns) -> ExternalCrate {
         ExternalCrate::new("diesel-builders")
             .unwrap()
+            .features(["postgres", "sqlite"])
             .features(number_of_columns.as_diesel_builders_feature())
-            .version("0.1.2")
+            .version("0.2.0")
             .unwrap()
             .into()
     }

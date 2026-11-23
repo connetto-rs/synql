@@ -6,8 +6,8 @@
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use quote::{ToTokens, quote};
 use sql_relations::traits::{
-    HorizontalSameAsColumnLike, TriangularSameAsColumnLike, TriangularSameAsForeignKeyLike,
-    VerticalSameAsColumnLike,
+    HorizontalSameAsColumnLike, HorizontalSameAsForeignKeyLike, TriangularSameAsColumnLike,
+    TriangularSameAsForeignKeyLike, VerticalSameAsColumnLike,
 };
 use sql_traits::{
     errors::LookupError,
@@ -18,7 +18,7 @@ use syn::Ident;
 
 use crate::{
     structs::{ExternalTypeRef, Workspace},
-    traits::{CheckConstraintSynLike, ForeignKeySynLike, TableSynLike},
+    traits::{CheckConstraintSynLike, TableSynLike},
     utils::{is_reserved_diesel_keyword, is_reserved_rust_word},
 };
 
@@ -39,6 +39,15 @@ fn string_literal(expr: &Expr) -> Option<&str> {
         Expr::Nested(inner) | Expr::Cast { expr: inner, .. } => string_literal(inner),
         Expr::Value(ValueWithSpan { value: Value::SingleQuotedString(string), .. }) => Some(string),
         _ => None,
+    }
+}
+
+/// Returns `expr` without the parentheses and casts around it, as
+/// `(-1)::smallint` is `-1`.
+fn without_casts(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Nested(inner) | Expr::Cast { expr: inner, .. } => without_casts(inner),
+        _ => expr,
     }
 }
 
@@ -298,7 +307,10 @@ pub trait ColumnSynLike: ColumnLike {
         // column.
         let mut same_as_columns: Vec<(_, Vec<_>)> = Vec::new();
         for same_as in self.horizontal_same_as_foreign_keys(database)? {
-            let Some((key, pairs)) = same_as.mirrored_column_pairs(database)? else {
+            if !same_as.is_horizontal_same_as_of_triangular(database)? {
+                continue;
+            }
+            let Some((key, pairs)) = same_as.horizontal_same_as_column_pairs(database)? else {
                 continue;
             };
             // The key carries the mandatory or discretionary decorator instead.
@@ -471,6 +483,27 @@ pub trait ColumnSynLike: ColumnLike {
         Ok(quote! {
             #[table_model(default = #casted_default_value)]
         })
+    }
+
+    /// Returns the value of the Rust type of this column that the SQL literal
+    /// `constant` spells, as `'ownable'::resource_kind` spells
+    /// `ResourceKind::Ownable`, or `None` when the type has no such value.
+    ///
+    /// # Arguments
+    ///
+    /// * `constant` - The literal, under any parentheses and casts.
+    /// * `workspace` - The workspace where the column is defined.
+    /// * `database` - The database where the column is defined.
+    fn constant_value(
+        &self,
+        constant: &Expr,
+        workspace: &Workspace,
+        database: &Self::DB,
+    ) -> Option<proc_macro2::TokenStream> {
+        let external_postgres_type = self.external_postgres_type(workspace, database)?;
+        let spelling = string_literal(constant)
+            .map_or_else(|| without_casts(constant).to_string(), ToOwned::to_owned);
+        external_postgres_type.cast(&spelling).ok()
     }
 
     /// Returns whether a non-tautological check constraint of this column
