@@ -1,7 +1,7 @@
 //! Submodule providing the `VerticalSameAsColumnLike` trait for working
 //! with columns that have vertical same-as relationships.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use sql_traits::{
     errors::LookupError,
@@ -226,8 +226,9 @@ where
         Ok(reachable_set)
     }
 
-    /// Returns all columns that are vertically same-as this column, including
-    /// those inferred via transitive relationships through ancestral tables.
+    /// Returns every column of an ancestral table that holds the same value
+    /// as this column, through vertical same-as foreign keys followed in
+    /// either direction among the ancestors.
     ///
     /// # Arguments
     ///
@@ -236,7 +237,6 @@ where
     /// # Example
     ///
     /// ```rust
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use sql_relations::prelude::*;
     /// use sqlparser::dialect::GenericDialect;
     ///
@@ -254,26 +254,104 @@ where
     ///         FOREIGN KEY (id, child_name) REFERENCES grandparent(id, name)
     ///     );
     ///   ",
-    /// )?;
-    /// let child_table =
-    ///     db.table_by_target(TargetName::new("child", false), IdentifierCase::AsWritten)?.unwrap();
-    /// let child_name_column = child_table
-    ///     .column("child_name", &db, IdentifierCase::AsWritten)?
-    ///     .expect("Column 'child_name' should exist");
-    /// let parent_table =
-    ///     db.table_by_target(TargetName::new("parent", false), IdentifierCase::AsWritten)?.unwrap();
-    /// let parent_name_column = parent_table
-    ///     .column("parent_name", &db, IdentifierCase::AsWritten)?
-    ///     .expect("Column 'parent_name' should exist");
-    /// let grandparent_table = db
-    ///     .table_by_target(TargetName::new("grandparent", false), IdentifierCase::AsWritten)?
-    ///     .unwrap();
-    /// let grandparent_name_column = grandparent_table
-    ///     .column("name", &db, IdentifierCase::AsWritten)?
-    ///     .expect("Column 'name' should exist");
-    /// assert_eq!(child_name_column.dominant_vertical_same_as_columns(&db)?, vec![parent_name_column]);
-    /// # Ok(())
-    /// # }
+    /// )
+    /// .unwrap();
+    /// let column = |table: &str, column: &str| {
+    ///     db.table_by_target(TargetName::new(table, false), IdentifierCase::AsWritten)
+    ///         .unwrap()
+    ///         .unwrap()
+    ///         .column(column, &db, IdentifierCase::AsWritten)
+    ///         .unwrap()
+    ///         .unwrap()
+    /// };
+    /// let equal_columns =
+    ///     column("child", "child_name").vertical_same_as_ancestor_columns(&db).unwrap();
+    /// assert_eq!(equal_columns.len(), 2);
+    /// assert!(equal_columns.contains(column("parent", "parent_name")));
+    /// assert!(equal_columns.contains(column("grandparent", "name")));
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the ancestral tables, their columns or
+    /// their foreign keys cannot be resolved.
+    fn vertical_same_as_ancestor_columns<'db>(
+        &'db self,
+        database: &'db Self::DB,
+    ) -> Result<HashSet<&'db <Self::DB as DatabaseLike>::Column>, LookupError>
+    where
+        Self: 'db,
+    {
+        let mut equal_columns = self.vertical_same_as_reachable_set(database)?;
+        let ancestors = self.table(database).ancestral_extended_tables(database)?;
+        let mut changed = true;
+
+        while changed {
+            changed = false;
+            for &ancestor in &ancestors {
+                for ancestor_column in ancestor.columns(database)? {
+                    if equal_columns.contains(ancestor_column) {
+                        continue;
+                    }
+                    let ancestor_reachable_set =
+                        ancestor_column.vertical_same_as_reachable_set(database)?;
+                    if !equal_columns.is_disjoint(&ancestor_reachable_set) {
+                        equal_columns.insert(ancestor_column);
+                        equal_columns.extend(ancestor_reachable_set);
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        Ok(equal_columns)
+    }
+
+    /// Returns the columns of [`vertical_same_as_ancestor_columns`] that none
+    /// of the others finds among its own ancestors, so that setting the
+    /// returned columns sets the others through the vertical same-as of their
+    /// tables. Along a chain of extensions this is the nearest ancestor alone.
+    ///
+    /// [`vertical_same_as_ancestor_columns`]: VerticalSameAsColumnLike::vertical_same_as_ancestor_columns
+    ///
+    /// # Arguments
+    ///
+    /// * `database` - The database containing the tables and foreign keys.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use sql_relations::prelude::*;
+    /// use sqlparser::dialect::GenericDialect;
+    ///
+    /// let db = ParserDB::parse::<GenericDialect>(
+    ///     "
+    ///     CREATE TABLE grandparent (id INT PRIMARY KEY, name TEXT, UNIQUE(id, name));
+    ///     CREATE TABLE parent (
+    ///         id INT PRIMARY KEY REFERENCES grandparent(id),
+    ///         parent_name TEXT,
+    ///         FOREIGN KEY (id, parent_name) REFERENCES grandparent(id, name)
+    ///     );
+    ///     CREATE TABLE child (
+    ///         id INT PRIMARY KEY REFERENCES parent(id),
+    ///         child_name TEXT,
+    ///         FOREIGN KEY (id, child_name) REFERENCES grandparent(id, name)
+    ///     );
+    ///   ",
+    /// )
+    /// .unwrap();
+    /// let column = |table: &str, column: &str| {
+    ///     db.table_by_target(TargetName::new(table, false), IdentifierCase::AsWritten)
+    ///         .unwrap()
+    ///         .unwrap()
+    ///         .column(column, &db, IdentifierCase::AsWritten)
+    ///         .unwrap()
+    ///         .unwrap()
+    /// };
+    /// assert_eq!(
+    ///     column("child", "child_name").dominant_vertical_same_as_columns(&db).unwrap(),
+    ///     vec![column("parent", "parent_name")]
+    /// );
     /// ```
     ///
     /// # Errors
@@ -287,51 +365,16 @@ where
     where
         Self: 'db,
     {
-        let mut reachable_set = self.vertical_same_as_reachable_set(database)?;
-        // A frontier column flips to true once another reachable column also
-        // reaches it.
-        let mut frontier: HashMap<&'db <Self::DB as DatabaseLike>::Column, bool> =
-            self.vertical_same_as_columns(database)?.into_iter().map(|c| (c, false)).collect();
-        let vertical_extension_tables = self.table(database).ancestral_extended_tables(database)?;
-        let mut changed = true;
-
-        while changed {
-            changed = false;
-            for &ancestor in &vertical_extension_tables {
-                for ancestor_column in ancestor.columns(database)? {
-                    if reachable_set.contains(ancestor_column) {
-                        continue;
-                    }
-
-                    let ancestor_reachable_set =
-                        ancestor_column.vertical_same_as_reachable_set(database)?;
-
-                    for (frontier_column, is_reachable) in &mut frontier {
-                        if !*is_reachable && ancestor_reachable_set.contains(frontier_column) {
-                            *is_reachable = true;
-                            changed = true;
-                        }
-                    }
-
-                    // Sharing a reachable column makes the ancestor column
-                    // vertically same-as.
-                    if !reachable_set.is_disjoint(&ancestor_reachable_set) {
-                        reachable_set.insert(ancestor_column);
-                        frontier.insert(ancestor_column, false);
-                        reachable_set.extend(ancestor_reachable_set);
-                        changed = true;
-                    }
-                }
-            }
+        let equal_columns = self.vertical_same_as_ancestor_columns(database)?;
+        let mut implied = HashSet::new();
+        for &column in &equal_columns {
+            implied.extend(column.vertical_same_as_ancestor_columns(database)?);
         }
 
-        let mut vertical_same_as_columns = frontier
-            .into_iter()
-            .filter_map(|(column, is_reachable)| if is_reachable { None } else { Some(column) })
-            .collect::<Vec<_>>();
-        vertical_same_as_columns.sort_unstable();
+        let mut dominant_columns = equal_columns.difference(&implied).copied().collect::<Vec<_>>();
+        dominant_columns.sort_unstable();
 
-        Ok(vertical_same_as_columns)
+        Ok(dominant_columns)
     }
 }
 
