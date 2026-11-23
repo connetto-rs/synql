@@ -161,6 +161,8 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
 
         let ancestral_table_list_decorator =
             table.ancestral_table_list_decorator(self.database, workspace)?;
+        let ancestral_discriminator_decorators =
+            table.ancestral_discriminator_decorators(self.database, workspace)?;
 
         let fields = table.generate_struct_fields(workspace, self.database)?;
         let unique_indices = table.unique_indices_macros(self.database)?;
@@ -199,6 +201,7 @@ impl<DB: SynQLDatabaseLike> SynQL<'_, DB> {
             #surrogate_key_decorator
             #(#foreign_key_decorators)*
             #(#ancestral_table_list_decorator)*
+            #(#ancestral_discriminator_decorators)*
             #[diesel(table_name = #table_ident)]
             pub struct #camel_case_name {
                 #(#fields),*

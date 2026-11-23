@@ -28,6 +28,20 @@ pub enum Error {
         default: String,
     },
     #[error(
+        "Foreign key `{foreign_key}` fixes column `{column_name}` to `{constant}`, which has no value of the column's Rust type"
+    )]
+    /// An extension key whose generated discriminator fixes a column of the
+    /// extended table to a literal with no value of the column's Rust type,
+    /// which the builders of the extending tables would have to write.
+    UnsupportedDiscriminator {
+        /// The foreign key, as its host and referenced columns.
+        foreign_key: String,
+        /// Name of the column of the extended table.
+        column_name: String,
+        /// SQL expression the key fixes the column to.
+        constant: String,
+    },
+    #[error(
         "Column `{column_name}` in table `{table_name}` is a TIMESTAMP without time zone, which names no instant. Declare it TIMESTAMPTZ"
     )]
     /// A column of type `TIMESTAMP` without time zone, which synql refuses

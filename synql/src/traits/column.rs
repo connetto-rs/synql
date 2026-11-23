@@ -42,6 +42,15 @@ fn string_literal(expr: &Expr) -> Option<&str> {
     }
 }
 
+/// Returns `expr` without the parentheses and casts around it, as
+/// `(-1)::smallint` is `-1`.
+fn without_casts(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Nested(inner) | Expr::Cast { expr: inner, .. } => without_casts(inner),
+        _ => expr,
+    }
+}
+
 /// PostgreSQL's spellings of the start time of the current transaction, read
 /// in any case.
 const CURRENT_TIMESTAMP: [&str; 3] = ["now", "transaction_timestamp", "current_timestamp"];
@@ -474,6 +483,27 @@ pub trait ColumnSynLike: ColumnLike {
         Ok(quote! {
             #[table_model(default = #casted_default_value)]
         })
+    }
+
+    /// Returns the value of the Rust type of this column that the SQL literal
+    /// `constant` spells, as `'ownable'::resource_kind` spells
+    /// `ResourceKind::Ownable`, or `None` when the type has no such value.
+    ///
+    /// # Arguments
+    ///
+    /// * `constant` - The literal, under any parentheses and casts.
+    /// * `workspace` - The workspace where the column is defined.
+    /// * `database` - The database where the column is defined.
+    fn constant_value(
+        &self,
+        constant: &Expr,
+        workspace: &Workspace,
+        database: &Self::DB,
+    ) -> Option<proc_macro2::TokenStream> {
+        let external_postgres_type = self.external_postgres_type(workspace, database)?;
+        let spelling = string_literal(constant)
+            .map_or_else(|| without_casts(constant).to_string(), ToOwned::to_owned);
+        external_postgres_type.cast(&spelling).ok()
     }
 
     /// Returns whether a non-tautological check constraint of this column
