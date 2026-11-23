@@ -3,9 +3,11 @@
 //! nested builder of any descendant inserts the whole hierarchy without its
 //! caller naming the discriminator.
 //!
-//! The test generates a workspace, adds a crate of assertions over the
-//! generated code, and runs the assertions with `cargo test` against the
-//! SQLite tables pg2sqlite emits for the schema.
+//! The test generates a workspace with one crate per table, so the leaf's
+//! crate writes a discriminator whose type lives in neither its crate nor its
+//! parent's, adds a crate of assertions over the generated code, and runs the
+//! assertions with `cargo test` against the SQLite tables pg2sqlite emits for
+//! the schema.
 
 use std::{path::Path, process::Command};
 
@@ -51,8 +53,10 @@ edition = "2024"
 diesel = { workspace = true, features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
 diesel-builders.workspace = true
 rosetta-uuid.workspace = true
+demo-asset_models.workspace = true
 demo-resources.workspace = true
 demo-shapes.workspace = true
+demo-triangles.workspace = true
 demo-public-resource_kind.workspace = true
 "#;
 
@@ -60,9 +64,11 @@ const ASSERTIONS_TEST: &str = r#"//! Assertions over discriminated extensions on
 
 use diesel::{connection::SimpleConnection, prelude::*};
 use diesel_builders::prelude::*;
+use demo_asset_models::*;
 use demo_public_resource_kind::ResourceKind;
 use demo_resources::*;
 use demo_shapes::*;
+use demo_triangles::*;
 
 /// Opens an in-memory SQLite database holding the tables pg2sqlite emits.
 fn connection() -> SqliteConnection {
@@ -139,6 +145,7 @@ fn extensions_write_the_discriminators_of_their_ancestors() {
         SynQL::new_with_crate_base_path(&db, &workspace_path, Path::new("models"))
             .name("demo")
             .member(TomlDependency::new("assertions").path("assertions").expect("A valid path"))
+            .one_crate_per_table()
             .generate_workspace_toml()
             .into();
     synql.generate().expect("Unable to generate workspace");

@@ -17,6 +17,7 @@ use sql_traits::{
     errors::LookupError,
     traits::{CheckConstraintLike, ColumnLike, DatabaseLike, TableLike},
 };
+use sqlparser::ast::Expr;
 use strum::IntoEnumIterator;
 use syn::Ident;
 
@@ -28,6 +29,11 @@ use crate::{
     },
     utils::is_reserved_rust_word,
 };
+
+/// An extension key, the ancestor column it fixes to a constant, and that
+/// constant, as [`TableSynLike::ancestral_discriminators`] returns them.
+type Discriminator<'db, DB> =
+    (&'db <DB as DatabaseLike>::ForeignKey, &'db <DB as DatabaseLike>::Column, &'db Expr);
 
 /// Trait implemented by types that represent SQL tables and can be used to
 /// generate Rust code for them.
@@ -329,19 +335,24 @@ where
     }
 
     /// Returns the sorted unique external crates required by this table,
-    /// including those required by its columns and its check constraints.
+    /// including those required by its columns, by the ancestor columns it
+    /// writes a [discriminator](Self::ancestral_discriminators) into, and by
+    /// its check constraints.
     ///
     /// # Errors
     ///
-    /// Returns a [`LookupError`] when the columns, check constraints or their
-    /// functions cannot be resolved.
+    /// Returns a [`LookupError`] when the columns, the ancestors, their
+    /// extension keys, the check constraints or their functions cannot be
+    /// resolved.
     fn external_crates<'workspace>(
         &self,
         database: &Self::DB,
         workspace: &'workspace Workspace,
     ) -> Result<Vec<&'workspace ExternalCrate>, LookupError> {
         let mut crates = Vec::new();
-        for column in self.columns(database)? {
+        let discriminator_columns =
+            self.ancestral_discriminators(database)?.into_iter().map(|(_, column, _)| column);
+        for column in self.columns(database)?.chain(discriminator_columns) {
             if let Some(postgres_type) = column.external_postgres_type(workspace, database) {
                 crates.push(postgres_type.external_crate());
             }
@@ -466,16 +477,46 @@ where
             .collect::<Vec<_>>())
     }
 
-    /// Generates the decorators writing into the extended ancestors of this
-    /// table the discriminators its extension keys, and those of its
-    /// ancestors, fix to a constant. A key `ownables (id, kind)` referencing
+    /// Returns the columns of the extended ancestors of this table that its
+    /// extension keys, and those of its ancestors, fix to a constant, each
+    /// with the key and the constant. A key `ownables (id, kind)` referencing
     /// `resources (id, kind)`, with `ownables.kind` generated as `'ownable'`,
-    /// writes `ResourceKind::Ownable` into `resources.kind` from the builders
-    /// of `ownables` and of every table extending it.
+    /// fixes `resources.kind` to `'ownable'` for `ownables` and for every
+    /// table extending it. A column that is generated in turn is left out, as
+    /// the database writes it.
     ///
-    /// A `default(...)` applies only to the builder of the table declaring
-    /// it, so each descendant repeats the decorators of its ancestors. A
-    /// referenced column that is generated in turn is left to the database.
+    /// # Arguments
+    ///
+    /// * `database` - The database where the table is defined.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the ancestors, their extension keys or
+    /// the columns of those keys cannot be resolved.
+    fn ancestral_discriminators<'db>(
+        &'db self,
+        database: &'db Self::DB,
+    ) -> Result<Vec<Discriminator<'db, Self::DB>>, LookupError> {
+        let mut extension_keys: Vec<_> = self.extension_foreign_keys(database)?.collect();
+        for ancestor in self.ancestral_extended_tables(database)? {
+            extension_keys.extend(ancestor.extension_foreign_keys(database)?);
+        }
+        let mut discriminators = Vec::new();
+        for foreign_key in extension_keys {
+            for (column, constant) in foreign_key.referenced_constants(database)? {
+                if column.generation_expression().is_none() {
+                    discriminators.push((foreign_key, column, constant));
+                }
+            }
+        }
+        Ok(discriminators)
+    }
+
+    /// Generates the decorators writing into the extended ancestors of this
+    /// table its [discriminators](Self::ancestral_discriminators), as
+    /// `ResourceKind::Ownable` into `resources.kind`. A `default(...)`
+    /// applies only to the builder of the table declaring it, so each
+    /// descendant repeats the decorators of its ancestors.
     ///
     /// # Arguments
     ///
@@ -492,31 +533,22 @@ where
         database: &Self::DB,
         workspace: &Workspace,
     ) -> Result<Vec<proc_macro2::TokenStream>, crate::Error> {
-        let mut extension_keys: Vec<_> = self.extension_foreign_keys(database)?.collect();
-        for ancestor in self.ancestral_extended_tables(database)? {
-            extension_keys.extend(ancestor.extension_foreign_keys(database)?);
-        }
         let mut decorators = Vec::new();
-        for foreign_key in extension_keys {
+        for (foreign_key, column, constant) in self.ancestral_discriminators(database)? {
             let referenced_table = foreign_key.referenced_table(database)?;
             let referenced_table_ident = referenced_table.table_ident();
             let referenced_table_crate = referenced_table.crate_ident(workspace);
-            for (column, constant) in foreign_key.referenced_constants(database)? {
-                if column.generation_expression().is_some() {
-                    continue;
-                }
-                let Some(value) = column.constant_value(constant, workspace, database) else {
-                    return Err(crate::Error::UnsupportedDiscriminator {
-                        foreign_key: foreign_key_signature(foreign_key, database)?,
-                        column_name: column.column_name().to_owned(),
-                        constant: constant.to_string(),
-                    });
-                };
-                let column_ident = column.column_snake_ident();
-                decorators.push(quote! {
-                    #[table_model(default(#referenced_table_crate::#referenced_table_ident::#column_ident, #value))]
+            let Some(value) = column.constant_value(constant, workspace, database) else {
+                return Err(crate::Error::UnsupportedDiscriminator {
+                    foreign_key: foreign_key_signature(foreign_key, database)?,
+                    column_name: column.column_name().to_owned(),
+                    constant: constant.to_string(),
                 });
-            }
+            };
+            let column_ident = column.column_snake_ident();
+            decorators.push(quote! {
+                #[table_model(default(#referenced_table_crate::#referenced_table_ident::#column_ident, #value))]
+            });
         }
         Ok(decorators)
     }
