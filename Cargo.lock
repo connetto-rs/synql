@@ -42,6 +42,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "archery"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33ca55ee147b1926dbea904f50fe4902494e97bc742205abbbf10c709e43815f"
+dependencies = [
+ "triomphe",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -742,6 +751,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
 
 [[package]]
+name = "rpds"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e025feb26210bc196b908e72deb063b1b4000754304341cbc168a1e72c857ebc"
+dependencies = [
+ "archery",
+ "smallvec",
+]
+
+[[package]]
 name = "rustc-std-workspace-alloc"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -854,26 +873,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
+name = "smallvec"
+version = "1.16.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3244542535d5de959d90ec55d1b5ff0fd2bb7b1310223907d5f11932847f7b59"
+
+[[package]]
 name = "sql-traits"
 version = "0.1.0"
-source = "git+https://github.com/connetto-rs/sql-traits?branch=main#b7e8a175b3a1cdebc32b6d89b610a353e8cc9bc0"
+source = "git+https://github.com/connetto-rs/sql-traits?branch=main#8e6f1505f2817d4c6d8a8a3ed9d7cb81d87386f2"
 dependencies = [
  "geometric-traits",
  "once_cell",
+ "recursive",
  "sha2",
  "sql-values",
  "sqlparser",
  "sqlparser-canonicalize",
+ "sqlparser-expr-eval",
  "sqlparser-plpgsql",
+ "sqlstate",
+ "stacker",
  "thiserror",
  "unicode-normalization",
+ "yoke",
 ]
 
 [[package]]
 name = "sql-values"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa63391be723434747b0c2ffc2e7270f4a7a476d083b55cdda961c4773d1d5e4"
+version = "0.6.0"
+source = "git+https://github.com/connetto-rs/sql-values?branch=main#bee0f26da9575f1f0ab38550e3188cb25590058e"
 dependencies = [
  "jiff",
  "thiserror",
@@ -890,7 +919,7 @@ dependencies = [
 [[package]]
 name = "sqlparser"
 version = "0.64.0"
-source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#2ff068b30954e1d67889550fae8539640422c61a"
+source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#ba850faff0d7bde0193e4c8635fdf5155a801d97"
 dependencies = [
  "log",
  "recursive",
@@ -909,6 +938,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqlparser-expr-eval"
+version = "0.1.0"
+source = "git+https://github.com/connetto-rs/sqlparser-expr-eval?branch=main#46deb4392399a9658ac504ad39fd32556d4f9475"
+dependencies = [
+ "rpds",
+ "sql-values",
+ "sqlparser",
+]
+
+[[package]]
 name = "sqlparser-plpgsql"
 version = "0.1.0"
 source = "git+https://github.com/connetto-rs/sqlparser-plpgsql?branch=main#f5ea51d2d98a1ce18fc47f74185836165fcac612"
@@ -921,7 +960,7 @@ dependencies = [
 [[package]]
 name = "sqlparser_derive"
 version = "0.7.0"
-source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#2ff068b30954e1d67889550fae8539640422c61a"
+source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#ba850faff0d7bde0193e4c8635fdf5155a801d97"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -933,6 +972,12 @@ name = "sqlstate"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "858cea190fe7555971c35a5eb336858f1bf962a2bd7ceb8704fb1759b36af2cd"
+
+[[package]]
+name = "stable_deref_trait"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stable_try_trait_v2"
@@ -1146,6 +1191,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 
 [[package]]
+name = "triomphe"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d15f4f5898bcfc5d8a8e45ed30b2f108d710c1a2e5489dbf80e078f707181bc"
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1295,6 +1346,22 @@ name = "winnow"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3b93199df0ab874cdf0c6a94f0a0dc3423fe41f1cafb62b8bd7b1deb277aef"
+
+[[package]]
+name = "yoke"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "417ef3fcf6c300b7dbd25c85531a746931c02ad536f3cf4786ed1e88223340b3"
+dependencies = [
+ "stable_deref_trait",
+ "zerofrom",
+]
+
+[[package]]
+name = "zerofrom"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ec05a11813ea801ff6d75110ad09cd0824ddba17dfe17128ea0d5f68e6c5272"
 
 [[package]]
 name = "zmij"
