@@ -488,10 +488,11 @@ where
             if foreign_key.is_vertical_same_as(database)? {
                 continue;
             }
-            // Each mirrored column already forms its two-column key, which a
-            // wider key replaces.
-            if let Some((_, mirrored)) = foreign_key.mirrored_column_pairs(database)? {
-                if !mirrored.is_empty() && foreign_key.host_columns(database)?.nth(2).is_none() {
+            // The same-as decorators of a triangle form one two-column key per
+            // mirrored column, so only a wider horizontal key is declared, and
+            // it replaces the two-column keys it covers.
+            if foreign_key.is_horizontal_same_as_of_triangular(database)? {
+                if foreign_key.host_columns(database)?.nth(2).is_none() {
                     continue;
                 }
             } else if foreign_key.is_triangular_same_as(database)? {
