@@ -71,6 +71,88 @@ fn a_registered_crate_followed_on_git_is_patched_for_crates_io() {
 }
 
 #[test]
+fn caller_patches_follow_the_derived_ones_and_replace_those_they_name() {
+    let db = ParserDB::parse::<GenericDialect>("CREATE TABLE users (id INT PRIMARY KEY);")
+        .expect("Unable to parse the schema");
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let workspace_path = temp_dir.path().join("caller_patched_workspace");
+    let followed = |name: &str| -> ExternalCrate {
+        ExternalCrate::new(name)
+            .expect("A valid crate name")
+            .version("1.0")
+            .expect("A valid version")
+            .git(format!("https://github.com/connetto-rs/{name}").as_str(), "main")
+            .expect("A valid git source")
+            .into()
+    };
+    let fork = |name: &str| {
+        TomlDependency::new(name)
+            .git("https://github.com/connetto-rs/fork", Some("fix"))
+            .expect("A valid git source")
+    };
+    let synql: SynQL<ParserDB> = SynQL::new(&db, &workspace_path)
+        .name("caller-patched-workspace")
+        .external_crate(followed("replaced"))
+        .external_crate(followed("kept"))
+        .crates_io_patch(TomlDependency::new("sqlstate").version("9").expect("A valid version"))
+        .crates_io_patch(fork("sqlstate"))
+        .crates_io_patch(fork("replaced"))
+        .generate_workspace_toml()
+        .into();
+    synql.generate().expect("Unable to generate workspace");
+
+    let manifest = std::fs::read_to_string(workspace_path.join("Cargo.toml"))
+        .expect("Unable to read the workspace manifest");
+    let patches: Vec<&str> = manifest
+        .lines()
+        .skip_while(|line| *line != "[patch.crates-io]")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .collect();
+    assert_eq!(
+        patches,
+        [
+            "kept = { git = \"https://github.com/connetto-rs/kept\", branch = \"main\" }",
+            "sqlstate = { git = \"https://github.com/connetto-rs/fork\", branch = \"fix\" }",
+            "replaced = { git = \"https://github.com/connetto-rs/fork\", branch = \"fix\" }",
+        ],
+        "{manifest}"
+    );
+}
+
+#[test]
+fn caller_patches_alone_write_the_patch_section() {
+    let db = ParserDB::parse::<GenericDialect>("CREATE TABLE users (id INT PRIMARY KEY);")
+        .expect("Unable to parse the schema");
+    let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
+    let workspace_path = temp_dir.path().join("diesel_patched_workspace");
+    let synql: SynQL<ParserDB> = SynQL::new(&db, &workspace_path)
+        .name("diesel-patched-workspace")
+        .crates_io_patch(
+            TomlDependency::new("diesel")
+                .git("https://github.com/diesel-rs/diesel", Some("main"))
+                .expect("A valid git source"),
+        )
+        .generate_workspace_toml()
+        .into();
+    synql.generate().expect("Unable to generate workspace");
+
+    let manifest = std::fs::read_to_string(workspace_path.join("Cargo.toml"))
+        .expect("Unable to read the workspace manifest");
+    let patches: Vec<&str> = manifest
+        .lines()
+        .skip_while(|line| *line != "[patch.crates-io]")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .collect();
+    assert_eq!(
+        patches,
+        ["diesel = { git = \"https://github.com/diesel-rs/diesel\", branch = \"main\" }"],
+        "{manifest}"
+    );
+}
+
+#[test]
 fn test_workspace_generation() -> Result<(), Box<dyn std::error::Error>> {
     let db = ParserDB::parse::<GenericDialect>(
         "

@@ -2,6 +2,7 @@
 //! `diesel` workspace from a SQL schema, based on `sql_traits`.
 
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     path::Path,
 };
@@ -141,6 +142,8 @@ pub struct SynQL<'db, DB: SynQLDatabaseLike> {
     clear_existing: bool,
     /// Additional workspace members.
     members: Vec<TomlDependency>,
+    /// Entries the caller adds to the `[patch.crates-io]` section.
+    crates_io_patches: Vec<TomlDependency>,
     /// Callbacks to generate additional code for each table.
     callbacks: Vec<Callback<'db, DB::Table, DB>>,
     /// Callbacks to generate additional dependencies for each table.
@@ -433,15 +436,21 @@ impl<'db, DB: SynQLDatabaseLike> SynQL<'db, DB> {
         writeln!(buffer)?;
 
         // A published crate followed on git is patched for its crates.io
-        // dependents too, so the workspace builds a single copy of it.
-        let patches: Vec<TomlDependency> = declared_crates
-            .into_iter()
+        // dependents too, so the workspace builds a single copy of it. The
+        // caller's entries follow, replacing a derived entry they name.
+        let mut patches = declared_crates
+            .iter()
             .filter_map(|external_crate| {
                 let dependency: &TomlDependency = external_crate.as_ref();
                 dependency.crates_io_patch()
             })
-            .collect();
-        if !patches.is_empty() {
+            .filter(|patch| {
+                !self.crates_io_patches.iter().any(|added| added.name() == patch.name())
+            })
+            .map(Cow::Owned)
+            .chain(self.crates_io_patches.iter().map(Cow::Borrowed))
+            .peekable();
+        if patches.peek().is_some() {
             writeln!(buffer, "[patch.crates-io]")?;
             for patch in patches {
                 writeln!(buffer, "{patch}")?;
