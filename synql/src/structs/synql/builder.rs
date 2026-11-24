@@ -53,6 +53,8 @@ pub struct SynQLBuilder<'db, DB: SynQLDatabaseLike> {
     layout: CrateLayout,
     /// Additional workspace members.
     members: Vec<TomlDependency>,
+    /// Entries the caller adds to the `[patch.crates-io]` section.
+    crates_io_patches: Vec<TomlDependency>,
     callbacks: Vec<Callback<'db, DB::Table, DB>>,
     toml_callbacks: Vec<TomlCallback<'db, DB::Table, DB>>,
     sink_callbacks: Vec<SinkCallback<'db, DB::Table, DB>>,
@@ -84,6 +86,7 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
             external_crates: Vec::new(),
             layout: CrateLayout::Grouped(1.0),
             members: Vec::new(),
+            crates_io_patches: Vec::new(),
             callbacks: Vec::new(),
             toml_callbacks: Vec::new(),
             sink_callbacks: Vec::new(),
@@ -349,6 +352,29 @@ impl<'db, DB: SynQLDatabaseLike> SynQLBuilder<'db, DB> {
         self
     }
 
+    /// Adds `patch` to the `[patch.crates-io]` section of the workspace
+    /// TOML, which [`generate_workspace_toml`](Self::generate_workspace_toml)
+    /// writes.
+    ///
+    /// The section lists the entries SynQL derives from the external crates
+    /// it declares with both a version and a git source, followed by the
+    /// added entries in the order they were added. An added entry replaces
+    /// the derived entry and any earlier added entry for the same crate, so
+    /// that the section patches each crate once.
+    ///
+    /// Cargo applies only the patches of the workspace it builds, so a
+    /// workspace whose dependencies patch a crate repeats their patch here.
+    ///
+    /// # Arguments
+    /// * `patch` - The entry redirecting a crates.io crate, such as one with a
+    ///   git source.
+    #[must_use]
+    pub fn crates_io_patch(mut self, patch: TomlDependency) -> Self {
+        self.crates_io_patches.retain(|added| added.name() != patch.name());
+        self.crates_io_patches.push(patch);
+        self
+    }
+
     /// Registers a callback to generate code for a given table.
     #[must_use]
     pub fn callback<F>(mut self, callback: F) -> Self
@@ -433,6 +459,7 @@ impl<'db, DB: SynQLDatabaseLike> From<SynQLBuilder<'db, DB>> for SynQL<'db, DB> 
             external_crates: builder.external_crates,
             layout: builder.layout,
             members: builder.members,
+            crates_io_patches: builder.crates_io_patches,
             callbacks: builder.callbacks,
             toml_callbacks: builder.toml_callbacks,
             sink_callbacks: builder.sink_callbacks,
