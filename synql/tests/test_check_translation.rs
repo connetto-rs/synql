@@ -181,7 +181,7 @@ CREATE TABLE namespaces (
     retired BOOLEAN,
     hidden BOOLEAN,
     archived BOOLEAN NOT NULL CHECK (NOT archived),
-    slug TEXT NOT NULL CHECK (NOT (slug LIKE 'x%')),
+    slug TEXT NOT NULL CHECK (NOT (slug LIKE 'x%')) CHECK (NOT (slug ILIKE '%z')),
     CHECK (NOT reserved OR owner IS NULL),
     CHECK (NOT retired OR owner IS NOT NULL),
     CHECK (NOT (retired AND hidden))
@@ -475,6 +475,9 @@ fn not_negates_booleans_and_leaves_null_null() {
     assert!(<Namespaces as ValidateColumn<namespaces::slug>>::validate_column(&"ax".to_owned()).is_ok());
     assert!(is_check_violation(<Namespaces as ValidateColumn<namespaces::slug>>::validate_column(
         &"xa".to_owned()
+    )));
+    assert!(is_check_violation(<Namespaces as ValidateColumn<namespaces::slug>>::validate_column(
+        &"aZ".to_owned()
     )));
 }
 
