@@ -138,6 +138,10 @@ fn operators_need_operands_of_their_kind() {
         ),
         UnsupportedCheck::Cast(_)
     ));
+    assert!(matches!(
+        unsupported_reason("CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (NOT a));"),
+        UnsupportedCheck::Operator(operator) if operator == "NOT"
+    ));
 }
 
 #[test]

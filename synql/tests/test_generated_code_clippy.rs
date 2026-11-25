@@ -175,6 +175,28 @@ CREATE TABLE switches (
 }
 
 #[test]
+fn boolean_negations_read_the_boolean() {
+    assert_clippy_accepts(
+        "
+CREATE TABLE namespaces (
+    id INT PRIMARY KEY,
+    owner INT,
+    reserved BOOLEAN NOT NULL,
+    archived BOOLEAN NOT NULL CHECK (NOT archived),
+    retired BOOLEAN CHECK (NOT retired),
+    code TEXT NOT NULL CHECK (NOT (code LIKE 'a%')),
+    first_count INT NOT NULL,
+    second_count INT NOT NULL,
+    CHECK (NOT reserved OR owner IS NULL),
+    CHECK (NOT (first_count < second_count)),
+    CHECK (NOT (first_count < second_count) OR owner IS NULL),
+    CHECK (NOT NOT reserved OR owner IS NOT NULL),
+    CHECK (NOT (reserved AND retired))
+);",
+    );
+}
+
+#[test]
 fn validation_functions_borrow_copied_columns() {
     let db = ParserDB::parse::<PostgreSqlDialect>(
         "

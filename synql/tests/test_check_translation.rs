@@ -174,6 +174,18 @@ CREATE TABLE readings (
     depth DOUBLE PRECISION NOT NULL CHECK ('-inf'::FLOAT8 < depth) CHECK (depth <= ' 1.5e3 '::float8),
     ratio REAL NOT NULL CHECK (ratio < '+INFINITY'::real)
 );
+CREATE TABLE namespaces (
+    id INT PRIMARY KEY,
+    owner INT,
+    reserved BOOLEAN NOT NULL,
+    retired BOOLEAN,
+    hidden BOOLEAN,
+    archived BOOLEAN NOT NULL CHECK (NOT archived),
+    slug TEXT NOT NULL CHECK (NOT (slug LIKE 'x%')),
+    CHECK (NOT reserved OR owner IS NULL),
+    CHECK (NOT retired OR owner IS NOT NULL),
+    CHECK (NOT (retired AND hidden))
+);
 ";
 
 const CHECKS_MANIFEST: &str = r#"[package]
@@ -262,6 +274,7 @@ synql-check-translation-stamps.workspace = true
 synql-check-translation-leases.workspace = true
 synql-check-translation-blinks.workspace = true
 synql-check-translation-readings.workspace = true
+synql-check-translation-namespaces.workspace = true
 rosetta-utc.workspace = true
 "#;
 
@@ -429,6 +442,39 @@ fn boolean_columns_and_literals() {
     assert!(<Switches as ValidateColumn<switches::on_off>>::validate_column(&true).is_ok());
     assert!(is_check_violation(<Switches as ValidateColumn<switches::on_off>>::validate_column(
         &false
+    )));
+}
+
+#[test]
+fn not_negates_booleans_and_leaves_null_null() {
+    use synql_check_translation_namespaces::namespaces;
+    type Namespaces = <namespaces::table as TableExt>::NewValues;
+    let validate =
+        |reserved: bool, retired: Option<bool>, hidden: Option<bool>, owner: Option<i32>| {
+            let mut values = namespaces::table::empty_new_values();
+            SetColumn::<namespaces::owner>::set_column(&mut values, owner);
+            SetColumn::<namespaces::reserved>::set_column(&mut values, reserved);
+            SetColumn::<namespaces::retired>::set_column(&mut values, retired);
+            SetColumn::<namespaces::hidden>::set_column(&mut values, hidden);
+            SetColumn::<namespaces::archived>::set_column(&mut values, false);
+            SetColumn::<namespaces::slug>::set_column(&mut values, "a".to_owned());
+            ValidateRecord::<namespaces::table>::validate_record(&values)
+        };
+    assert!(validate(false, None, None, Some(1)).is_ok());
+    assert!(validate(true, None, None, None).is_ok());
+    assert!(is_check_violation(validate(true, None, None, Some(1))));
+    assert!(validate(false, Some(false), None, None).is_ok());
+    assert!(is_check_violation(validate(false, Some(true), None, None)));
+    assert!(validate(false, Some(true), None, Some(1)).is_ok());
+    assert!(is_check_violation(validate(false, Some(true), Some(true), Some(1))));
+    assert!(validate(false, Some(true), Some(false), Some(1)).is_ok());
+    assert!(<Namespaces as ValidateColumn<namespaces::archived>>::validate_column(&false).is_ok());
+    assert!(is_check_violation(
+        <Namespaces as ValidateColumn<namespaces::archived>>::validate_column(&true)
+    ));
+    assert!(<Namespaces as ValidateColumn<namespaces::slug>>::validate_column(&"ax".to_owned()).is_ok());
+    assert!(is_check_violation(<Namespaces as ValidateColumn<namespaces::slug>>::validate_column(
+        &"xa".to_owned()
     )));
 }
 
