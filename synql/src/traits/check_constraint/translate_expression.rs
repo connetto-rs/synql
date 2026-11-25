@@ -16,7 +16,7 @@ use sql_traits::{
 };
 use sqlparser::ast::{
     BinaryOperator, CastKind, DataType, Expr, Function, FunctionArg, FunctionArgExpr,
-    FunctionArguments, Ident, InTarget, Interval, Value, ValueWithSpan,
+    FunctionArguments, Ident, InTarget, Interval, UnaryOperator, Value, ValueWithSpan,
 };
 
 use super::{interval::fixed_microseconds, like_pattern::LikePattern};
@@ -36,6 +36,8 @@ enum Binding {
     Prefix,
     /// A binary operation or a `match`.
     Loose,
+    /// A block, which an `if` condition takes only as an operand.
+    Block,
 }
 
 /// A SQL expression translated to a Rust expression.
@@ -72,7 +74,7 @@ impl<DB: DatabaseLike> Operand<'_, '_, DB> {
     /// Returns the expression ready to be the operand of an operator.
     fn operand(&self) -> TokenStream {
         let tokens = &self.tokens;
-        if self.binding == Binding::Loose {
+        if matches!(self.binding, Binding::Loose | Binding::Block) {
             quote! { (#tokens) }
         } else {
             quote! { #tokens }
@@ -463,6 +465,12 @@ where
         expr: &Expr,
         operand: &Operand<'workspace, 'db, DB>,
     ) -> Result<TokenStream, Error> {
+        if let Expr::UnaryOp { op: UnaryOperator::Not, expr: negated } = strip_nesting(expr) {
+            let negated = self.operand(negated, None)?;
+            if negated.binding != Binding::Block {
+                return Ok(negated.tokens);
+            }
+        }
         if let Expr::BinaryOp { left, op, right } = strip_nesting(expr) {
             if let Some((inner, holds_when_true)) = boolean_literal_comparison(left, op, right) {
                 let inner_operand = self.operand(inner, None)?;
@@ -1062,6 +1070,7 @@ where
                 let right = self.operand(right, None)?;
                 self.logical(op, left, right)
             }
+            Expr::UnaryOp { op: UnaryOperator::Not, expr: negated } => self.negation(negated),
             Expr::In { expr: needle, target: InTarget::List(list), negated, global: false } => {
                 self.in_list(needle, list, *negated)
             }
@@ -1108,6 +1117,36 @@ where
             let right = comparable(right, owned_right);
             quote! { #left #operator #right }
         }))
+    }
+
+    /// Translates SQL's NOT of the expression, NULL when it is NULL.
+    ///
+    /// The negation of `LIKE` and `ILIKE` is `NOT LIKE` and `NOT ILIKE`, and
+    /// the negation of a negation is its operand.
+    fn negation(&self, expr: &Expr) -> Result<Operand<'workspace, 'db, DB>, Error> {
+        match strip_nesting(expr) {
+            Expr::UnaryOp { op: UnaryOperator::Not, expr: negated } => {
+                self.negation_operand(negated)
+            }
+            Expr::Like { negated, any: false, expr: text, pattern, escape_char: None } => {
+                self.like_operand(text, pattern, !*negated, false)
+            }
+            Expr::ILike { negated, any: false, expr: text, pattern, escape_char: None } => {
+                self.like_operand(text, pattern, !*negated, true)
+            }
+            _ => Ok(Self::not(self.negation_operand(expr)?)),
+        }
+    }
+
+    /// Translates the operand of SQL's NOT, which must be a boolean.
+    fn negation_operand(&self, expr: &Expr) -> Result<Operand<'workspace, 'db, DB>, Error> {
+        let operand = self.operand(expr, None)?;
+        if !operand.ty.is_bool() {
+            return Err(
+                self.unsupported(UnsupportedCheck::Operator(UnaryOperator::Not.to_string()))
+            );
+        }
+        Ok(operand)
     }
 
     /// Translates `IN` as the OR of the equalities of the needle with each
@@ -1224,7 +1263,7 @@ where
         let (tokens, binding) = if text.nullable {
             (quote! { #receiver.map(|text| #matcher) }, Binding::Postfix)
         } else {
-            (quote! {{ let text = #receiver; #matcher }}, Binding::Loose)
+            (quote! {{ let text = #receiver; #matcher }}, Binding::Block)
         };
         Ok(Operand {
             tokens,
