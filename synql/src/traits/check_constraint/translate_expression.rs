@@ -748,7 +748,8 @@ where
         }))
     }
 
-    /// Translates the literal into a Rust value of the hinted type.
+    /// Translates the literal into a Rust value of the hinted type, which a
+    /// quoted literal takes as PostgreSQL types a literal of unknown type.
     fn parse_value(
         &self,
         value: &Value,
@@ -769,7 +770,7 @@ where
                 Ok((tokens, ty))
             }
             Value::SingleQuotedString(string) => {
-                match type_hint.filter(ExternalTypeRef::is_enum) {
+                match type_hint {
                     Some(ty) => Ok((self.typed_string(value, string, ty)?, ty)),
                     None => Ok((quote! { #string }, self.workspace.string())),
                 }

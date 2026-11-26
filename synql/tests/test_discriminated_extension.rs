@@ -33,14 +33,20 @@ CREATE TABLE triangles (
     sides SMALLINT GENERATED ALWAYS AS (3) STORED NOT NULL,
     FOREIGN KEY (id, sides) REFERENCES shapes (id, sides)
 );
+CREATE TABLE tokens (id UUID PRIMARY KEY, issuer UUID NOT NULL, UNIQUE (id, issuer));
+CREATE TABLE root_tokens (
+    id UUID PRIMARY KEY,
+    issuer UUID GENERATED ALWAYS AS ('{A0EEBC99-9C0B4EF8-BB6D6BB9-BD380A11}'::uuid) STORED NOT NULL,
+    FOREIGN KEY (id, issuer) REFERENCES tokens (id, issuer)
+);
 ";
 
 const UNTRANSLATABLE_SCHEMA: &str = "
-CREATE TABLE tokens (id INT PRIMARY KEY, issuer UUID NOT NULL, UNIQUE (id, issuer));
+CREATE TABLE tokens (id INT PRIMARY KEY, issued TIMESTAMPTZ NOT NULL, UNIQUE (id, issued));
 CREATE TABLE root_tokens (
     id INT PRIMARY KEY,
-    issuer UUID GENERATED ALWAYS AS ('00000000-0000-0000-0000-000000000000'::uuid) STORED,
-    FOREIGN KEY (id, issuer) REFERENCES tokens (id, issuer)
+    issued TIMESTAMPTZ GENERATED ALWAYS AS ('2000-01-01 00:00:00+00'::timestamptz) STORED,
+    FOREIGN KEY (id, issued) REFERENCES tokens (id, issued)
 );
 ";
 
@@ -57,6 +63,8 @@ demo-asset_models.workspace = true
 demo-resources.workspace = true
 demo-shapes.workspace = true
 demo-triangles.workspace = true
+demo-tokens.workspace = true
+demo-root_tokens.workspace = true
 demo-public-resource_kind.workspace = true
 "#;
 
@@ -67,7 +75,9 @@ use diesel_builders::prelude::*;
 use demo_asset_models::*;
 use demo_public_resource_kind::ResourceKind;
 use demo_resources::*;
+use demo_root_tokens::*;
 use demo_shapes::*;
+use demo_tokens::*;
 use demo_triangles::*;
 
 /// Opens an in-memory SQLite database holding the tables pg2sqlite emits.
@@ -96,6 +106,12 @@ fn connection() -> SqliteConnection {
                 id BLOB PRIMARY KEY,
                 sides INTEGER GENERATED ALWAYS AS (3) STORED NOT NULL,
                 FOREIGN KEY (id, sides) REFERENCES shapes (id, sides)
+            );
+            CREATE TABLE tokens (id BLOB PRIMARY KEY, issuer BLOB NOT NULL, UNIQUE (id, issuer));
+            CREATE TABLE root_tokens (
+                id BLOB PRIMARY KEY,
+                issuer BLOB GENERATED ALWAYS AS (X'A0EEBC999C0B4EF8BB6D6BB9BD380A11') STORED NOT NULL,
+                FOREIGN KEY (id, issuer) REFERENCES tokens (id, issuer)
             );",
         )
         .expect("create the tables pg2sqlite emits");
@@ -132,6 +148,23 @@ fn a_scalar_discriminator_is_written_as_its_literal() {
         .first(&mut connection)
         .expect("load the shape the triangle inserted");
     assert_eq!(shape.get_column_ref::<shapes::sides>(), &3);
+}
+
+#[test]
+fn a_uuid_discriminator_is_written_as_its_literal() {
+    let mut connection = connection();
+    let id = rosetta_uuid::Uuid::new_v4();
+    SetTokenId::id(root_tokens::table::builder(), id)
+        .insert(&mut connection)
+        .expect("insert the token and the root token without naming the issuer");
+    let token: Token = tokens::table
+        .find(id)
+        .select(Token::as_select())
+        .first(&mut connection)
+        .expect("load the token the root token inserted");
+    let issuer: rosetta_uuid::Uuid =
+        "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11".parse().expect("A valid UUID");
+    assert_eq!(token.get_column_ref::<tokens::issuer>(), &issuer);
 }
 "#;
 
@@ -182,14 +215,14 @@ fn a_discriminator_without_a_rust_value_is_refused() {
     let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
     let workspace_path = temp_dir.path().join("demo");
     let synql: SynQL<ParserDB> = SynQL::new(&db, &workspace_path).name("demo").into();
-    let error = synql.generate().expect_err("No builder can write the issuer");
+    let error = synql.generate().expect_err("No builder can write the issue time");
     assert!(
         matches!(
             &error,
             Error::UnsupportedDiscriminator { foreign_key, column_name, constant }
-                if foreign_key == "root_tokens (id, issuer) REFERENCES tokens (id, issuer)"
-                    && column_name == "issuer"
-                    && constant == "'00000000-0000-0000-0000-000000000000'::UUID"
+                if foreign_key == "root_tokens (id, issued) REFERENCES tokens (id, issued)"
+                    && column_name == "issued"
+                    && constant == "'2000-01-01 00:00:00+00'::TIMESTAMPTZ"
         ),
         "{error}"
     );

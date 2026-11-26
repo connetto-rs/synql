@@ -119,6 +119,35 @@ fn enum_columns_compare_only_with_their_labels() {
 }
 
 #[test]
+fn uuid_columns_compare_only_with_postgresql_uuid_spellings() {
+    for literal in [
+        "'bc3cf2e2'",
+        "'bc3cf2e2-768c-4af9-bf86-65f23378a21'",
+        "'bc3cf2e2-768c-4af9-bf86-65f23378a2120'",
+        "'bc3cf2e-2768c-4af9-bf86-65f23378a212'",
+        "'bc3cf2e2--768c-4af9-bf86-65f23378a212'",
+        "'bc3cf2e2-768c-4af9-bf86-65f23378a212-'",
+        "'-bc3cf2e2-768c-4af9-bf86-65f23378a212'",
+        "'{bc3cf2e2-768c-4af9-bf86-65f23378a212'",
+        "'bc3cf2e2-768c-4af9-bf86-65f23378a212}'",
+        "' bc3cf2e2-768c-4af9-bf86-65f23378a212'",
+        "'urn:uuid:bc3cf2e2-768c-4af9-bf86-65f23378a212'",
+        "'+c3cf2e2-768c-4af9-bf86-65f23378a212'",
+        "'gc3cf2e2-768c-4af9-bf86-65f23378a212'",
+    ] {
+        assert!(
+            matches!(
+                unsupported_reason(&format!(
+                    "CREATE TABLE t (id UUID PRIMARY KEY, CHECK (id <> {literal}));"
+                )),
+                UnsupportedCheck::MixedTypes { right, .. } if right == literal
+            ),
+            "{literal}"
+        );
+    }
+}
+
+#[test]
 fn operators_need_operands_of_their_kind() {
     assert!(matches!(
         unsupported_reason(
