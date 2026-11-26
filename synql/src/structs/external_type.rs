@@ -6,6 +6,7 @@ mod traits_mask;
 use std::{fmt::Debug, hash::Hash};
 
 pub use builder::ExternalTypeBuilder;
+use proc_macro2::Span;
 use quote::{ToTokens, quote};
 pub use traits_mask::Trait;
 
@@ -102,7 +103,8 @@ impl ExternalType {
     }
 
     /// Casts a value to the external type, the label of a PostgreSQL enum
-    /// type to its variant.
+    /// type to its variant and PostgreSQL's spellings of a UUID to a
+    /// `rosetta_uuid::Uuid`.
     pub(crate) fn cast(&self, value: &str) -> Result<proc_macro2::TokenStream, syn::Error> {
         let string_rust_type = self.rust_type.to_token_stream().to_string();
 
@@ -178,6 +180,13 @@ impl ExternalType {
                 let casted: i128 = value.parse().map_err(|_| mk_err())?;
                 quote! { #casted }
             }
+            ":: rosetta_uuid :: Uuid" => {
+                let bytes = uuid_bytes(value)
+                    .ok_or_else(mk_err)?
+                    .map(|byte| syn::LitInt::new(&format!("{byte:#04x}"), Span::call_site()));
+                let rust_type = &self.rust_type;
+                quote! { #rust_type::from([#(#bytes),*]) }
+            }
             _ => {
                 return Err(mk_err());
             }
@@ -215,6 +224,33 @@ impl ExternalType {
                 | "f64"
         )
     }
+}
+
+/// Returns the bytes of the UUID PostgreSQL's UUID input reads from the
+/// text, 32 hexadecimal digits in any case with an optional hyphen after
+/// every group of four but the last, all optionally within braces.
+fn uuid_bytes(text: &str) -> Option<[u8; 16]> {
+    let digits = match text.strip_prefix('{') {
+        Some(braced) => braced.strip_suffix('}')?,
+        None => text,
+    };
+    let hex_digit = |character: u8| char::from(character).to_digit(16);
+    let mut rest = digits.as_bytes();
+    let mut bytes = [0; 16];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        let [high, low, tail @ ..] = rest else {
+            return None;
+        };
+        *byte = u8::try_from((hex_digit(*high)? << 4) | hex_digit(*low)?).ok()?;
+        rest = tail;
+        if index % 2 == 1
+            && index < 15
+            && let [b'-', tail @ ..] = rest
+        {
+            rest = tail;
+        }
+    }
+    rest.is_empty().then_some(bytes)
 }
 
 /// A float literal as PostgreSQL's float input reads it.

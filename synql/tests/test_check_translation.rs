@@ -186,6 +186,14 @@ CREATE TABLE namespaces (
     CHECK (NOT retired OR owner IS NOT NULL),
     CHECK (NOT (retired AND hidden))
 );
+CREATE TABLE principals (
+    id INT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    namespace_id UUID NOT NULL,
+    parent_id UUID CHECK (parent_id <> '{A0EEBC99-9C0B4EF8-BB6D6BB9-BD380A11}'::uuid),
+    rank INT NOT NULL CHECK (rank < '100'),
+    CHECK (kind NOT IN ('user', 'everyone', 'signed_in') OR namespace_id = 'bc3cf2e2-768c-4af9-bf86-65f23378a212')
+);
 ";
 
 const CHECKS_MANIFEST: &str = r#"[package]
@@ -275,7 +283,9 @@ synql-check-translation-leases.workspace = true
 synql-check-translation-blinks.workspace = true
 synql-check-translation-readings.workspace = true
 synql-check-translation-namespaces.workspace = true
+synql-check-translation-principals.workspace = true
 rosetta-utc.workspace = true
+rosetta-uuid.workspace = true
 "#;
 
 const ASSERTIONS_TEST: &str = r#"//! Assertions over the generated validation code.
@@ -714,6 +724,38 @@ fn float_casts_read_infinities_and_numeric_strings() {
     assert!(ratio(f32::MAX).is_ok());
     assert!(is_check_violation(ratio(f32::INFINITY)));
     assert!(is_check_violation(ratio(f32::NAN)));
+}
+
+#[test]
+fn quoted_literals_take_the_type_of_the_other_operand() {
+    use synql_check_translation_principals::principals;
+    type Principals = <principals::table as TableExt>::NewValues;
+    let uuid = |text: &str| text.parse::<rosetta_uuid::Uuid>().expect("A valid UUID");
+    let reserved = uuid("bc3cf2e2-768c-4af9-bf86-65f23378a212");
+    let other = uuid("00000000-0000-0000-0000-000000000001");
+    let validate = |kind: &str, namespace_id: rosetta_uuid::Uuid| {
+        let mut values = principals::table::empty_new_values();
+        SetColumn::<principals::kind>::set_column(&mut values, kind.to_owned());
+        SetColumn::<principals::namespace_id>::set_column(&mut values, namespace_id);
+        SetColumn::<principals::parent_id>::set_column(&mut values, None);
+        SetColumn::<principals::rank>::set_column(&mut values, 1);
+        ValidateRecord::<principals::table>::validate_record(&values)
+    };
+    assert!(validate("user", reserved).is_ok());
+    assert!(validate("team", other).is_ok());
+    assert!(is_check_violation(validate("everyone", other)));
+
+    let parent_id =
+        |id: rosetta_uuid::Uuid| <Principals as ValidateColumn<principals::parent_id>>::validate_column(&id);
+    assert!(parent_id(other).is_ok());
+    assert!(is_check_violation(parent_id(uuid("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"))));
+
+    let rank = |rank: i32| <Principals as ValidateColumn<principals::rank>>::validate_column(&rank);
+    assert!(rank(99).is_ok());
+    assert!(matches!(
+        rank(100),
+        Err(error) if matches!(error.kind(), ValidationErrorKind::MustBeStrictlySmallerThanScalar(..))
+    ));
 }
 "#;
 
