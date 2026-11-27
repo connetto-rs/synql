@@ -191,7 +191,7 @@ fn a_generated_column_in_a_key_the_builder_sets_is_refused() {
     assert!(
         matches!(
             &error,
-            Error::GeneratedKeyColumn { table_name, column_name }
+            Error::FilledKeyColumn { table_name, column_name }
                 if table_name == "codes" && column_name == "doubled"
         ),
         "{error}"

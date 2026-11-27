@@ -73,6 +73,20 @@ fn is_argumentless_call(expr: &Expr, functions: &[&str]) -> bool {
 /// Trait implemented by types that represent SQL columns and can be used to
 /// generate Rust code for them.
 pub trait ColumnSynLike: ColumnLike {
+    /// Returns whether this column belongs to a primary key the database
+    /// assigns in full, as
+    /// [`has_database_assigned_primary_key`](TableSynLike::has_database_assigned_primary_key)
+    /// describes it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the primary key or the columns the
+    /// table's triggers fill cannot be resolved.
+    fn is_database_assigned_key(&self, database: &Self::DB) -> Result<bool, LookupError> {
+        Ok(self.is_primary_key(database)?
+            && self.table(database).has_database_assigned_primary_key(database)?)
+    }
+
     /// Returns the uppercased acronym of this column.
     ///
     /// # Example
@@ -401,9 +415,7 @@ pub trait ColumnSynLike: ColumnLike {
         workspace: &Workspace,
         database: &Self::DB,
     ) -> Result<proc_macro2::TokenStream, crate::Error> {
-        if self.is_primary_key(database)?
-            && self.table(database).has_surrogate_primary_key(database)?
-        {
+        if self.is_database_assigned_key(database)? {
             return Ok(quote! {});
         }
         let Some(default_expression) =
@@ -642,10 +654,11 @@ pub trait ColumnSynLike: ColumnLike {
             rust_type.clone()
         };
 
-        // `surrogate_key` on the table already covers a surrogate key.
-        if self.generation_expression().is_some() && !self.is_surrogate_key(database)? {
+        // `surrogate_key` on the table already covers a key the database
+        // assigns in full.
+        if self.is_filled_on_insert(database)? && !self.is_database_assigned_key(database)? {
             if self.is_primary_key(database)? {
-                return Err(crate::Error::GeneratedKeyColumn {
+                return Err(crate::Error::FilledKeyColumn {
                     table_name: table.table_name().to_string(),
                     column_name: column_name.to_string(),
                 });
@@ -681,7 +694,7 @@ pub trait ColumnSynLike: ColumnLike {
         // validation, since the record validates the multi-column ones.
         let infallible_decorator = if !self.has_single_column_check_constraints(database)?
             && table.has_non_tautological_check_constraints_in_hierarchy(database)?
-            && !self.is_surrogate_key(database)?
+            && !self.is_database_assigned_key(database)?
         {
             Some(quote! {
                 #[infallible]

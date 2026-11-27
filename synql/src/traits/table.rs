@@ -443,6 +443,33 @@ where
         Ok(indices)
     }
 
+    /// Returns whether the database assigns every column of the primary key
+    /// of this table, through a serial or identity column, a generated
+    /// column or a `BEFORE INSERT` trigger, so the builder sets none of them
+    /// and the table marks its key as a `surrogate_key`. A table without a
+    /// primary key has no such key.
+    ///
+    /// # Arguments
+    ///
+    /// * `database` - The database where the table is defined.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LookupError`] when the primary key or the columns the
+    /// table's triggers fill cannot be resolved.
+    fn has_database_assigned_primary_key(&self, database: &Self::DB) -> Result<bool, LookupError> {
+        if !self.has_primary_key(database)? {
+            return Ok(false);
+        }
+        let filled: Vec<_> = self.filled_on_insert_columns(database)?.collect();
+        for column in self.primary_key_columns(database)? {
+            if !column.is_generated(database) && !filled.contains(&column) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Generates the decorators for the ancestral table list columns of this
     /// table.
     ///
@@ -482,8 +509,8 @@ where
     /// with the key and the constant. A key `ownables (id, kind)` referencing
     /// `resources (id, kind)`, with `ownables.kind` generated as `'ownable'`,
     /// fixes `resources.kind` to `'ownable'` for `ownables` and for every
-    /// table extending it. A column that is generated in turn is left out, as
-    /// the database writes it.
+    /// table extending it. A column the database fills on insert is left
+    /// out, as the builder never writes it.
     ///
     /// # Arguments
     ///
@@ -504,7 +531,7 @@ where
         let mut discriminators = Vec::new();
         for foreign_key in extension_keys {
             for (column, constant) in foreign_key.referenced_constants(database)? {
-                if column.generation_expression().is_none() {
+                if !column.is_filled_on_insert(database)? {
                     discriminators.push((foreign_key, column, constant));
                 }
             }
@@ -607,11 +634,10 @@ where
         database: &Self::DB,
     ) -> Result<Vec<proc_macro2::TokenStream>, crate::Error> {
         let mut validation_impls = Vec::new();
+        let filled: Vec<_> = self.filled_on_insert_columns(database)?.collect();
         for column in self.columns(database)? {
-            // A generated column is never set, so never validated.
-            if column.generation_expression().is_none()
-                && column.has_single_column_check_constraints(database)?
-            {
+            // A column the database fills is never set, so never validated.
+            if !filled.contains(&column) && column.has_single_column_check_constraints(database)? {
                 validation_impls.push(column.generate_validation_impl(workspace, database)?);
             }
         }
@@ -634,7 +660,8 @@ where
         workspace: &Workspace,
         database: &Self::DB,
     ) -> Result<Option<proc_macro2::TokenStream>, crate::Error> {
-        let table_has_surrogate_pk = self.has_surrogate_primary_key(database)?;
+        let database_assigned_key = self.has_database_assigned_primary_key(database)?;
+        let filled: Vec<_> = self.filled_on_insert_columns(database)?.collect();
         let mut validations = Vec::new();
         for check_constraint in self.non_tautological_check_constraints(database)? {
             if check_constraint.number_of_columns(database)? <= 1
@@ -645,8 +672,8 @@ where
             // Only the database holds a value for these columns.
             let mut involves_unset_column = false;
             for column in check_constraint.columns(database)? {
-                if (table_has_surrogate_pk && column.is_primary_key(database)?)
-                    || column.generation_expression().is_some()
+                if (database_assigned_key && column.is_primary_key(database)?)
+                    || filled.contains(&column)
                 {
                     involves_unset_column = true;
                     break;
