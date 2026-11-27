@@ -53,14 +53,15 @@ pub enum Error {
         column_name: String,
     },
     #[error(
-        "Generated column `{column_name}` is part of the primary key of table `{table_name}`, whose other key columns the builder sets"
+        "Column `{column_name}` of table `{table_name}` takes its value from the database on every insert, while the builder sets the rest of its primary key"
     )]
-    /// A stored generated column in a primary key whose other columns the
-    /// builder sets.
-    GeneratedKeyColumn {
+    /// A column of a primary key that every insert takes from the database,
+    /// as a generated column or one a `BEFORE INSERT` trigger overwrites,
+    /// while the builder sets the other key columns.
+    FilledKeyColumn {
         /// Name of the table of the column.
         table_name: String,
-        /// Name of the generated column.
+        /// Name of the column the database fills.
         column_name: String,
     },
     #[error(

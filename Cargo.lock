@@ -652,6 +652,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "quine-mc_cluskey"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07589615d719a60c8dd8a4622e7946465dfef20d1a428f969e3443e7386d5f45"
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -881,7 +887,7 @@ checksum = "3244542535d5de959d90ec55d1b5ff0fd2bb7b1310223907d5f11932847f7b59"
 [[package]]
 name = "sql-traits"
 version = "0.1.0"
-source = "git+https://github.com/connetto-rs/sql-traits?branch=main#8e6f1505f2817d4c6d8a8a3ed9d7cb81d87386f2"
+source = "git+https://github.com/connetto-rs/sql-traits?branch=main#e5e9944f3df3ebe08ed8a98ffbfd88c2afea2ccb"
 dependencies = [
  "geometric-traits",
  "once_cell",
@@ -892,6 +898,7 @@ dependencies = [
  "sqlparser-canonicalize",
  "sqlparser-expr-eval",
  "sqlparser-plpgsql",
+ "sqlparser-plpgsql-dataflow",
  "sqlstate",
  "stacker",
  "thiserror",
@@ -901,8 +908,8 @@ dependencies = [
 
 [[package]]
 name = "sql-values"
-version = "0.6.0"
-source = "git+https://github.com/connetto-rs/sql-values?branch=main#bee0f26da9575f1f0ab38550e3188cb25590058e"
+version = "0.7.0"
+source = "git+https://github.com/connetto-rs/sql-values?branch=main#725bb9e819ed8dbf247ffbad180a6d6a92c1bbf2"
 dependencies = [
  "jiff",
  "thiserror",
@@ -919,7 +926,7 @@ dependencies = [
 [[package]]
 name = "sqlparser"
 version = "0.64.0"
-source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#ba850faff0d7bde0193e4c8635fdf5155a801d97"
+source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#b3bc3df6fdba4600de281ab72fb9a7e4a0a1f0da"
 dependencies = [
  "log",
  "recursive",
@@ -940,8 +947,9 @@ dependencies = [
 [[package]]
 name = "sqlparser-expr-eval"
 version = "0.1.0"
-source = "git+https://github.com/connetto-rs/sqlparser-expr-eval?branch=main#46deb4392399a9658ac504ad39fd32556d4f9475"
+source = "git+https://github.com/connetto-rs/sqlparser-expr-eval?branch=main#c57b4779c4632fcb6f42611a5106dd87dc12d5be"
 dependencies = [
+ "quine-mc_cluskey",
  "rpds",
  "sql-values",
  "sqlparser",
@@ -950,7 +958,7 @@ dependencies = [
 [[package]]
 name = "sqlparser-plpgsql"
 version = "0.1.0"
-source = "git+https://github.com/connetto-rs/sqlparser-plpgsql?branch=main#f5ea51d2d98a1ce18fc47f74185836165fcac612"
+source = "git+https://github.com/connetto-rs/sqlparser-plpgsql?branch=main#f5debf1c49fe774f3bbfa1b51dc0951c8e24b43a"
 dependencies = [
  "sqlparser",
  "sqlstate",
@@ -958,9 +966,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sqlparser-plpgsql-dataflow"
+version = "0.1.0"
+source = "git+https://github.com/connetto-rs/sqlparser-plpgsql-dataflow?branch=main#d9353560282a17191b70bf650cbffbddf984c0c3"
+dependencies = [
+ "sqlparser",
+ "sqlparser-expr-eval",
+ "sqlparser-plpgsql",
+ "sqlstate",
+ "thiserror",
+]
+
+[[package]]
 name = "sqlparser_derive"
 version = "0.7.0"
-source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#ba850faff0d7bde0193e4c8635fdf5155a801d97"
+source = "git+https://github.com/apache/datafusion-sqlparser-rs?branch=main#b3bc3df6fdba4600de281ab72fb9a7e4a0a1f0da"
 dependencies = [
  "proc-macro2",
  "quote",
