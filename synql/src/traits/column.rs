@@ -477,7 +477,9 @@ pub trait ColumnSynLike: ColumnLike {
                 quote! { ::rosetta_time::Time::now_utc() }
             }
             _ => {
-                let Ok(casted_default_value) = external_postgres_type.cast(&default_value) else {
+                let Some(casted_default_value) =
+                    self.constant_value(default_expression, workspace, database)
+                else {
                     unimplemented!(
                         "Default value `{}` for column `{}` in table `{}` with SQL type `{}` cannot be casted to the corresponding Rust type `{}` from crate `{}`. Please implement the `cast` method for the `ExternalTypeRef` corresponding to this SQL type.",
                         default_value,
