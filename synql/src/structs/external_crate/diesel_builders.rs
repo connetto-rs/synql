@@ -27,7 +27,7 @@ impl ExternalCrate {
             .unwrap()
             .features(["postgres", "sqlite"])
             .features(number_of_columns.as_diesel_builders_feature())
-            .version("0.2.1")
+            .version("0.2.2")
             .unwrap()
             .into()
     }
