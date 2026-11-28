@@ -319,6 +319,17 @@ fn boolean_literal_comparison<'expr>(
     Some((expr, literal == equal))
 }
 
+/// Returns the members of both operands when both are row constructors.
+fn row_operands<'expr>(
+    left: &'expr Expr,
+    right: &'expr Expr,
+) -> Option<(&'expr [Expr], &'expr [Expr])> {
+    match (strip_nesting(left), strip_nesting(right)) {
+        (Expr::Tuple(left), Expr::Tuple(right)) => Some((left, right)),
+        _ => None,
+    }
+}
+
 /// Returns the Rust arithmetic operator for the SQL arithmetic operator.
 fn arithmetic_operator(op: &BinaryOperator) -> Option<TokenStream> {
     Some(match op {
@@ -479,6 +490,11 @@ where
                 } else {
                     Ok(inner_operand.operand())
                 };
+            }
+            if let Some((left_row, right_row)) = row_operands(left, right) {
+                // No member is NULL, so the comparison is FALSE exactly when
+                // its negation is TRUE.
+                return Ok(self.row_comparison(expr, left_row, op, right_row, true)?.operand());
             }
             if let Some(negation) = self.negated_comparison(left, op, right)? {
                 return Ok(negation);
@@ -1076,6 +1092,9 @@ where
                 self.in_list(needle, list, *negated)
             }
             Expr::BinaryOp { left, op, right } => {
+                if let Some((left_row, right_row)) = row_operands(left, right) {
+                    return self.row_comparison(expr, left_row, op, right_row, false);
+                }
                 if let Some((inner, holds_when_true)) = boolean_literal_comparison(left, op, right)
                 {
                     let inner = self.operand(inner, None)?;
@@ -1150,6 +1169,52 @@ where
         Ok(operand)
     }
 
+    /// Translates `=` or `<>` between two row constructors, or its negation
+    /// when `negated`, as PostgreSQL compares rows, `=` being the AND of the
+    /// equalities of their members and `<>` the OR of their inequalities.
+    fn row_comparison(
+        &self,
+        comparison: &Expr,
+        left: &[Expr],
+        op: &BinaryOperator,
+        right: &[Expr],
+        negated: bool,
+    ) -> Result<Operand<'workspace, 'db, DB>, Error> {
+        let equal = match op {
+            BinaryOperator::Eq => true,
+            BinaryOperator::NotEq => false,
+            _ => return Err(self.unsupported(UnsupportedCheck::Operator(op.to_string()))),
+        };
+        let (operator, junction) = if equal == negated {
+            (quote! { != }, BinaryOperator::Or)
+        } else {
+            (quote! { == }, BinaryOperator::And)
+        };
+        let unsupported = || self.unsupported(UnsupportedCheck::Expression(comparison.to_string()));
+        if left.len() != right.len() {
+            return Err(unsupported());
+        }
+        self.joined_comparisons(left.iter().zip(right), &operator, &junction, unsupported)
+    }
+
+    /// Joins with `junction` the comparisons with `operator` of each pair of
+    /// expressions, returning the `empty` error when there is no pair.
+    fn joined_comparisons<'expr>(
+        &self,
+        mut pairs: impl Iterator<Item = (&'expr Expr, &'expr Expr)>,
+        operator: &TokenStream,
+        junction: &BinaryOperator,
+        empty: impl FnOnce() -> Error,
+    ) -> Result<Operand<'workspace, 'db, DB>, Error> {
+        let (first_left, first_right) = pairs.next().ok_or_else(empty)?;
+        let mut translated = self.comparison(first_left, operator, first_right)?;
+        for (left, right) in pairs {
+            let comparison = self.comparison(left, operator, right)?;
+            translated = self.logical(junction, translated, comparison)?;
+        }
+        Ok(translated)
+    }
+
     /// Translates `IN` as the OR of the equalities of the needle with each
     /// item, and `NOT IN` as the AND of the inequalities, as PostgreSQL
     /// defines them.
@@ -1164,16 +1229,12 @@ where
         } else {
             (quote! { == }, BinaryOperator::Or)
         };
-        let mut items = list.iter();
-        let first = items.next().ok_or_else(|| {
-            self.unsupported(UnsupportedCheck::Expression(format!("{needle} IN ()")))
-        })?;
-        let mut translated = self.comparison(needle, &operator, first)?;
-        for item in items {
-            let comparison = self.comparison(needle, &operator, item)?;
-            translated = self.logical(&junction, translated, comparison)?;
-        }
-        Ok(translated)
+        self.joined_comparisons(
+            list.iter().map(|item| (needle, item)),
+            &operator,
+            &junction,
+            || self.unsupported(UnsupportedCheck::Expression(format!("{needle} IN ()"))),
+        )
     }
 
     /// Translates SQL's `now()` compared with a timestamp.

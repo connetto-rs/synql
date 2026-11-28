@@ -197,6 +197,26 @@ CREATE TABLE namespaces (
 }
 
 #[test]
+fn row_comparisons_compare_member_by_member() {
+    assert_clippy_accepts(
+        "
+CREATE TABLE teams (
+    namespace_id INT NOT NULL,
+    id INT NOT NULL,
+    parent_namespace_id INT,
+    parent_id INT,
+    slug TEXT NOT NULL,
+    parent_slug TEXT,
+    PRIMARY KEY (namespace_id, id),
+    CHECK ((parent_namespace_id, parent_id) <> (namespace_id, id)),
+    CHECK ((namespace_id, slug) <> (id, 'root')),
+    CHECK ((slug, namespace_id) = ('main', id)),
+    CHECK (NOT ((namespace_id, parent_slug) = (id, slug)))
+);",
+    );
+}
+
+#[test]
 fn validation_functions_borrow_copied_columns() {
     let db = ParserDB::parse::<PostgreSqlDialect>(
         "
