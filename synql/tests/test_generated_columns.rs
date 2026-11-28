@@ -1,6 +1,8 @@
 //! A stored generated column stays out of the builder, out of the `INSERT`
 //! and out of the checks the builder runs, and the model reads back the
-//! value the database computed.
+//! value the database computed. A primary key column generated as a
+//! constant stays out of the builder too, while the builder sets the rest of
+//! the key.
 //!
 //! The test generates a workspace, adds a crate of assertions over the
 //! generated code, and runs the assertions with `cargo test` against the
@@ -38,6 +40,21 @@ CREATE TABLE codes (
     price INT NOT NULL,
     doubled INT GENERATED ALWAYS AS (price * 2) STORED,
     PRIMARY KEY (price, doubled)
+);
+";
+
+const CONSTANT_KEY_SCHEMA: &str = "
+CREATE TABLE accounts (
+    realm TEXT GENERATED ALWAYS AS ('main') STORED NOT NULL,
+    id UUID NOT NULL,
+    PRIMARY KEY (realm, id)
+);
+CREATE TABLE admins (
+    realm TEXT GENERATED ALWAYS AS ('main') STORED NOT NULL,
+    id UUID NOT NULL,
+    title TEXT NOT NULL,
+    PRIMARY KEY (realm, id),
+    FOREIGN KEY (realm, id) REFERENCES accounts (realm, id)
 );
 ";
 
@@ -141,9 +158,87 @@ fn the_database_assigns_a_generated_key() {
 }
 "#;
 
+const CONSTANT_KEY_MANIFEST: &str = r#"[package]
+name = "assertions"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+diesel = { workspace = true, features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+diesel-builders.workspace = true
+rosetta-uuid.workspace = true
+demo-accounts.workspace = true
+demo-admins.workspace = true
+"#;
+
+const CONSTANT_KEY_TEST: &str = r#"//! Assertions over a key column generated as a constant on SQLite.
+
+use diesel::{connection::SimpleConnection, prelude::*};
+use diesel_builders::prelude::*;
+use demo_accounts::*;
+use demo_admins::*;
+
+/// Opens an in-memory SQLite database holding the tables pg2sqlite emits.
+fn connection() -> SqliteConnection {
+    let mut connection = SqliteConnection::establish(":memory:").expect("open SQLite");
+    // The typed DSL has no form for DDL.
+    connection
+        .batch_execute(
+            "PRAGMA foreign_keys = ON;
+            -- SQLite refuses a generated column in a primary key, so a default stands in for it.
+            CREATE TABLE accounts (
+                realm TEXT NOT NULL DEFAULT 'main',
+                id BLOB NOT NULL,
+                PRIMARY KEY (realm, id)
+            );
+            CREATE TABLE admins (
+                realm TEXT NOT NULL DEFAULT 'main',
+                id BLOB NOT NULL,
+                title TEXT NOT NULL,
+                PRIMARY KEY (realm, id),
+                FOREIGN KEY (realm, id) REFERENCES accounts (realm, id)
+            );",
+        )
+        .expect("create the tables pg2sqlite emits");
+    connection
+}
+
 #[test]
-fn generated_columns_stay_out_of_the_builder() {
-    let db = ParserDB::parse::<PostgreSqlDialect>(SCHEMA).expect("Unable to parse the schema");
+fn the_builder_sets_the_key_around_the_constant() {
+    let mut connection = connection();
+    let id = rosetta_uuid::Uuid::new_v4();
+    let account = accounts::table::builder()
+        .id(id)
+        .insert(&mut connection)
+        .expect("insert the account without writing its realm");
+    assert_eq!(account.get_column_ref::<accounts::realm>(), "main");
+    let loaded: Account = accounts::table
+        .find(("main".to_owned(), id))
+        .select(Account::as_select())
+        .first(&mut connection)
+        .expect("load the account by its realm and identifier");
+    assert_eq!(loaded, account);
+}
+
+#[test]
+fn a_descendant_shares_the_constant() {
+    let mut connection = connection();
+    let id = rosetta_uuid::Uuid::new_v4();
+    let admin = SetAccountId::id(admins::table::builder(), id)
+        .title("Root".to_owned())
+        .insert(&mut connection)
+        .expect("insert the account and the admin without writing either realm");
+    assert_eq!(admin.get_column_ref::<admins::realm>(), "main");
+    let account: Account = admin.ancestor(&mut connection).expect("load the account");
+    assert_eq!(account.get_column_ref::<accounts::realm>(), "main");
+    assert_eq!(account.get_column_ref::<accounts::id>(), &id);
+}
+"#;
+
+/// Generates the workspace of `schema` with a crate of assertions holding
+/// `manifest` and `test`, and runs the assertions with `cargo test`.
+fn assert_on_sqlite(schema: &str, manifest: &str, test: &str) {
+    let db = ParserDB::parse::<PostgreSqlDialect>(schema).expect("Unable to parse the schema");
     let temp_dir = tempfile::tempdir().expect("Unable to create temporary directory");
     let workspace_path = temp_dir.path().join("demo");
 
@@ -156,9 +251,9 @@ fn generated_columns_stay_out_of_the_builder() {
     synql.generate().expect("Unable to generate workspace");
 
     for (path, contents) in [
-        ("assertions/Cargo.toml", ASSERTIONS_MANIFEST),
-        ("assertions/tests/generated_columns.rs", ASSERTIONS_TEST),
-        ("assertions/src/lib.rs", "//! Assertions over a generated column on SQLite.\n"),
+        ("assertions/Cargo.toml", manifest),
+        ("assertions/tests/generated_columns.rs", test),
+        ("assertions/src/lib.rs", "//! Assertions over generated columns on SQLite.\n"),
     ] {
         let path = workspace_path.join(path);
         std::fs::create_dir_all(path.parent().expect("A parent directory"))
@@ -174,10 +269,20 @@ fn generated_columns_stay_out_of_the_builder() {
         .expect("Unable to run cargo test");
     assert!(
         output.status.success(),
-        "The generated column failed on SQLite:\n{}\n{}",
+        "The generated columns failed on SQLite:\n{}\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn generated_columns_stay_out_of_the_builder() {
+    assert_on_sqlite(SCHEMA, ASSERTIONS_MANIFEST, ASSERTIONS_TEST);
+}
+
+#[test]
+fn a_key_column_generated_as_a_constant_stays_out_of_the_builder() {
+    assert_on_sqlite(CONSTANT_KEY_SCHEMA, CONSTANT_KEY_MANIFEST, CONSTANT_KEY_TEST);
 }
 
 #[test]

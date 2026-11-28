@@ -657,17 +657,26 @@ pub trait ColumnSynLike: ColumnLike {
         };
 
         // `surrogate_key` on the table already covers a key the database
-        // assigns in full.
+        // assigns in full. A column generated as a constant holds a value
+        // known before the insert, so the builder still knows the whole key.
         if self.is_filled_on_insert(database)? && !self.is_database_assigned_key(database)? {
-            if self.is_primary_key(database)? {
-                return Err(crate::Error::FilledKeyColumn {
-                    table_name: table.table_name().to_string(),
-                    column_name: column_name.to_string(),
-                });
-            }
+            let generated_value = if self.is_primary_key(database)? {
+                let Some(value) = self
+                    .generated_constant()
+                    .and_then(|constant| self.constant_value(constant, workspace, database))
+                else {
+                    return Err(crate::Error::FilledKeyColumn {
+                        table_name: table.table_name().to_string(),
+                        column_name: column_name.to_string(),
+                    });
+                };
+                Some(quote! { = #value })
+            } else {
+                None
+            };
             return Ok(quote! {
                 #documentation
-                #[table_model(generated)]
+                #[table_model(generated #generated_value)]
                 #sql_type_decorator
                 #sql_name_decorator
                 #column_ident: #rust_type

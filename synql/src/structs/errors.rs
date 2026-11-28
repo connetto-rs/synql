@@ -57,7 +57,9 @@ pub enum Error {
     )]
     /// A column of a primary key that every insert takes from the database,
     /// as a generated column or one a `BEFORE INSERT` trigger overwrites,
-    /// while the builder sets the other key columns.
+    /// while the builder sets the other key columns. A column generated as a
+    /// literal its Rust type can hold is accepted, since the builder knows
+    /// that value before the insert.
     FilledKeyColumn {
         /// Name of the table of the column.
         table_name: String,

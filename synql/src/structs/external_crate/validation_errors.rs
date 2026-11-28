@@ -7,6 +7,6 @@ impl ExternalCrate {
     /// `validation_errors` crate.
     #[must_use]
     pub fn validation_errors() -> ExternalCrate {
-        ExternalCrate::new("validation-errors").unwrap().version("0.2.1").unwrap().into()
+        ExternalCrate::new("validation-errors").unwrap().version("0.3.0").unwrap().into()
     }
 }
