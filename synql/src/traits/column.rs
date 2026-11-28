@@ -396,6 +396,57 @@ pub trait ColumnSynLike: ColumnLike {
 
     /// Generates the default decorator for this column.
     ///
+    /// A column without a SQL default, or whose default is `NULL`, and a key
+    /// the database assigns get none. A column the builder must hold a value
+    /// for, a primary key column or one a `mandatory` or `discretionary`
+    /// decorator ties to another builder, gets
+    /// `#[table_model(default = ...)]` with [the Rust value of its
+    /// default](Self::default_value). Every other column gets
+    /// `#[table_model(database_default)]`, so an insert whose caller never
+    /// sets it leaves the column out and the database applies its default.
+    ///
+    /// # Arguments
+    ///
+    /// * `workspace` - The workspace where the column is defined.
+    /// * `database` - The database connection to use to query the column type.
+    ///
+    /// # Errors
+    ///
+    /// * Returns the errors of [`default_value`](Self::default_value) for a
+    ///   column getting `#[table_model(default = ...)]`, and a lookup error
+    ///   when its keys cannot be resolved.
+    ///
+    /// # Panics
+    ///
+    /// * Panics if the default of a primary key column, or of a column tied to
+    ///   another builder, cannot be casted to the corresponding Rust type.
+    fn generate_default_decorator(
+        &self,
+        workspace: &Workspace,
+        database: &Self::DB,
+    ) -> Result<proc_macro2::TokenStream, crate::Error> {
+        if self.is_database_assigned_key(database)?
+            || self.default_expression().is_none_or(is_null_literal)
+        {
+            return Ok(quote! {});
+        }
+        if !self.is_primary_key(database)?
+            && self.generate_triangular_same_as_decorators(workspace, database)?.is_empty()
+        {
+            return Ok(quote! {
+                #[table_model(database_default)]
+            });
+        }
+        Ok(self.default_value(workspace, database)?.map_or_else(
+            proc_macro2::TokenStream::new,
+            |default_value| quote! { #[table_model(default = #default_value)] },
+        ))
+    }
+
+    /// Returns the value of the Rust type of this column that its SQL
+    /// default spells, or `None` when the column has no default or its
+    /// default is `NULL`.
+    ///
     /// # Arguments
     ///
     /// * `workspace` - The workspace where the column is defined.
@@ -405,23 +456,22 @@ pub trait ColumnSynLike: ColumnLike {
     ///
     /// * Returns `crate::Error::ColumnTypeNotFound` if the column type cannot
     ///   be found.
+    /// * Returns `crate::Error::UnsupportedDefault` if the default of an enum
+    ///   column is no label of the enum.
     ///
     /// # Panics
     ///
     /// * Panics if the default value cannot be casted to the corresponding Rust
     ///   type.
-    fn generate_default_decorator(
+    fn default_value(
         &self,
         workspace: &Workspace,
         database: &Self::DB,
-    ) -> Result<proc_macro2::TokenStream, crate::Error> {
-        if self.is_database_assigned_key(database)? {
-            return Ok(quote! {});
-        }
+    ) -> Result<Option<proc_macro2::TokenStream>, crate::Error> {
         let Some(default_expression) =
             self.default_expression().filter(|expression| !is_null_literal(expression))
         else {
-            return Ok(quote! {});
+            return Ok(None);
         };
         let default_value = default_expression.to_string();
         let Some(external_postgres_type) = self.external_postgres_type(workspace, database) else {
@@ -494,9 +544,7 @@ pub trait ColumnSynLike: ColumnLike {
             }
         };
 
-        Ok(quote! {
-            #[table_model(default = #casted_default_value)]
-        })
+        Ok(Some(casted_default_value))
     }
 
     /// Returns the value of the Rust type of this column that the SQL literal

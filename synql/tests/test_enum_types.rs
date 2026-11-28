@@ -1,6 +1,6 @@
 //! PostgreSQL enum types become Rust enums, ordered as PostgreSQL orders their
-//! labels and converted from and to the labels, which columns, defaults and
-//! check constraints of the type use.
+//! labels and converted from and to the labels, which columns, primary key
+//! defaults and check constraints of the type use.
 //!
 //! The test generates a workspace, adds a crate of assertions over the
 //! generated code, and runs the assertions with `cargo test`.
@@ -29,8 +29,7 @@ CREATE TABLE people (
     CHECK (previous IS NULL OR mood >= previous)
 );
 CREATE TABLE moods_after_sadness (
-    id INT PRIMARY KEY,
-    mood mood NOT NULL CHECK (mood > 'sad')
+    mood mood PRIMARY KEY DEFAULT 'so-so'::mood CHECK (mood > 'sad')
 );
 ";
 
@@ -191,10 +190,10 @@ fn checks_order_enum_columns_against_labels() {
 }
 
 #[test]
-fn defaults_take_the_variant_of_their_label() {
-    use synql_enum_types_people::people;
-    let values = people::table::default_new_values();
-    assert_eq!(MayGetColumn::<people::mood>::may_get_column(&values), Some(Mood::SoSo));
+fn primary_key_defaults_take_the_variant_of_their_label() {
+    use synql_enum_types_moods_after_sadness::moods_after_sadness;
+    let values = moods_after_sadness::table::default_new_values();
+    assert_eq!(MayGetColumn::<moods_after_sadness::mood>::may_get_column(&values), Some(Mood::SoSo));
 }
 "#;
 
@@ -320,10 +319,10 @@ fn an_enum_type_sharing_the_crate_of_a_table_is_refused() {
 }
 
 #[test]
-fn a_default_that_is_no_label_is_unsupported() {
+fn a_primary_key_default_that_is_no_label_is_unsupported() {
     let (_temp_dir, result) = generate(
         "defaults",
-        "CREATE TYPE mood AS ENUM ('a'); CREATE FUNCTION first_mood() RETURNS mood AS 'SELECT ''a''::mood' LANGUAGE SQL; CREATE TABLE t (id INT PRIMARY KEY, x mood DEFAULT first_mood());",
+        "CREATE TYPE mood AS ENUM ('a'); CREATE FUNCTION first_mood() RETURNS mood AS 'SELECT ''a''::mood' LANGUAGE SQL; CREATE TABLE t (x mood PRIMARY KEY DEFAULT first_mood());",
     );
     let error = result.expect_err("A call is no label");
     assert!(

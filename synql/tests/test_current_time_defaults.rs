@@ -1,8 +1,9 @@
-//! A timestamp column defaulting to the current time, spelled `now()`,
-//! `transaction_timestamp()` or `CURRENT_TIMESTAMP` in any case, gets the
-//! current time from the builder, a date column defaulting to `CURRENT_DATE`
-//! gets the current UTC date, and a time column defaulting to `LOCALTIME` gets
-//! the current UTC time of day.
+//! A primary key column, which the builder fills before the insert, gets the
+//! current time from the builder when it is a timestamp defaulting to the
+//! current time, spelled `now()`, `transaction_timestamp()` or
+//! `CURRENT_TIMESTAMP` in any case, the current UTC date when it is a date
+//! defaulting to `CURRENT_DATE`, and the current UTC time of day when it is a
+//! time defaulting to `LOCALTIME`.
 //!
 //! The test generates a workspace, adds a crate of assertions over the
 //! generated builders, and runs the assertions with `cargo test`.
@@ -14,20 +15,20 @@ use sqlparser::dialect::PostgreSqlDialect;
 use synql::prelude::*;
 
 const SCHEMA: &str = "
-CREATE TABLE events (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE events (at TIMESTAMPTZ PRIMARY KEY DEFAULT now());
 CREATE TABLE stamps (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     shouted TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     transaction TIMESTAMPTZ NOT NULL DEFAULT transaction_timestamp(),
     keyword TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     lowercase_keyword TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
-    parenthesised TIMESTAMPTZ NOT NULL DEFAULT ((now()))
+    parenthesised TIMESTAMPTZ NOT NULL DEFAULT ((now())),
+    PRIMARY KEY (shouted, transaction, keyword, lowercase_keyword, parenthesised)
 );
 CREATE TABLE openings (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     day DATE NOT NULL DEFAULT CURRENT_DATE,
     opens TIME NOT NULL DEFAULT LOCALTIME,
-    lasts INTERVAL NOT NULL
+    lasts INTERVAL NOT NULL,
+    PRIMARY KEY (day, opens)
 );
 ";
 

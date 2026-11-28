@@ -47,8 +47,10 @@ fn struct_fields_name_the_unmapped_type() {
 }
 
 #[test]
-fn default_decorators_name_the_unmapped_type() {
-    assert_type_not_found(ColumnSynLike::generate_default_decorator);
+fn default_values_name_the_unmapped_type() {
+    assert_type_not_found(|column, workspace, database| {
+        column.default_value(workspace, database).map(Option::unwrap_or_default)
+    });
 }
 
 #[test]
