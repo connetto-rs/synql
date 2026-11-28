@@ -171,6 +171,18 @@ fn operators_need_operands_of_their_kind() {
         unsupported_reason("CREATE TABLE t (id INT PRIMARY KEY, a INT, CHECK (NOT a));"),
         UnsupportedCheck::Operator(operator) if operator == "NOT"
     ));
+    assert!(matches!(
+        unsupported_reason(
+            "CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT, CHECK ((a, b) < (b, a)));"
+        ),
+        UnsupportedCheck::Operator(operator) if operator == "<"
+    ));
+    assert!(matches!(
+        unsupported_reason(
+            "CREATE TABLE t (id INT PRIMARY KEY, a INT, b INT, CHECK ((a, b) = (b, a, id)));"
+        ),
+        UnsupportedCheck::Expression(expression) if expression == "(a, b) = (b, a, id)"
+    ));
 }
 
 #[test]

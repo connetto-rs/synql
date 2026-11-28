@@ -194,6 +194,26 @@ CREATE TABLE principals (
     rank INT NOT NULL CHECK (rank < '100'),
     CHECK (kind NOT IN ('user', 'everyone', 'signed_in') OR namespace_id = 'bc3cf2e2-768c-4af9-bf86-65f23378a212')
 );
+CREATE TABLE teams (
+    namespace_id INT NOT NULL,
+    id INT NOT NULL,
+    parent_namespace_id INT,
+    parent_id INT,
+    PRIMARY KEY (namespace_id, id),
+    CHECK ((parent_namespace_id, parent_id) <> (namespace_id, id))
+);
+CREATE TABLE mirrors (
+    id INT PRIMARY KEY,
+    low INT NOT NULL,
+    high INT NOT NULL,
+    copy_low INT NOT NULL,
+    copy_high INT,
+    label TEXT NOT NULL,
+    CHECK ((low, high) <> (high, low)),
+    CHECK ((low, high) = (copy_low, copy_high)),
+    CHECK (((copy_low, low)) = (low, copy_low)),
+    CHECK ((label, low) <> ('none', 0))
+);
 ";
 
 const CHECKS_MANIFEST: &str = r#"[package]
@@ -284,6 +304,8 @@ synql-check-translation-blinks.workspace = true
 synql-check-translation-readings.workspace = true
 synql-check-translation-namespaces.workspace = true
 synql-check-translation-principals.workspace = true
+synql-check-translation-teams.workspace = true
+synql-check-translation-mirrors.workspace = true
 rosetta-utc.workspace = true
 rosetta-uuid.workspace = true
 "#;
@@ -756,6 +778,53 @@ fn quoted_literals_take_the_type_of_the_other_operand() {
         rank(100),
         Err(error) if matches!(error.kind(), ValidationErrorKind::MustBeStrictlySmallerThanScalar(..))
     ));
+}
+
+#[test]
+fn row_comparisons_follow_postgresql_row_semantics() {
+    use synql_check_translation_mirrors::mirrors;
+    use synql_check_translation_teams::teams;
+    let team = |parent_namespace_id: Option<i32>, parent_id: Option<i32>| {
+        let mut values = teams::table::empty_new_values();
+        SetColumn::<teams::namespace_id>::set_column(&mut values, 1);
+        SetColumn::<teams::id>::set_column(&mut values, 2);
+        SetColumn::<teams::parent_namespace_id>::set_column(&mut values, parent_namespace_id);
+        SetColumn::<teams::parent_id>::set_column(&mut values, parent_id);
+        ValidateRecord::<teams::table>::validate_record(&values)
+    };
+    assert!(team(None, None).is_ok());
+    assert!(team(Some(1), None).is_ok());
+    assert!(team(Some(3), None).is_ok());
+    assert!(team(Some(1), Some(3)).is_ok());
+    assert!(team(Some(3), Some(2)).is_ok());
+    assert!(matches!(
+        team(Some(1), Some(2)),
+        Err(error) if matches!(
+            error.kind(),
+            ValidationErrorKind::CheckViolated {
+                fields: ["parent_namespace_id", "namespace_id", "parent_id", "id"],
+                ..
+            }
+        )
+    ));
+
+    let mirror = |low: i32, high: i32, copy_low: i32, copy_high: Option<i32>, label: &str| {
+        let mut values = mirrors::table::empty_new_values();
+        SetColumn::<mirrors::low>::set_column(&mut values, low);
+        SetColumn::<mirrors::high>::set_column(&mut values, high);
+        SetColumn::<mirrors::copy_low>::set_column(&mut values, copy_low);
+        SetColumn::<mirrors::copy_high>::set_column(&mut values, copy_high);
+        SetColumn::<mirrors::label>::set_column(&mut values, label.to_owned());
+        ValidateRecord::<mirrors::table>::validate_record(&values)
+    };
+    assert!(mirror(1, 2, 1, Some(2), "a").is_ok());
+    assert!(mirror(1, 2, 1, None, "a").is_ok());
+    assert!(is_check_violation(mirror(1, 2, 1, Some(3), "a")));
+    assert!(is_check_violation(mirror(1, 2, 0, None, "a")));
+    assert!(is_check_violation(mirror(2, 2, 2, Some(2), "a")));
+    assert!(mirror(1, 2, 1, Some(2), "none").is_ok());
+    assert!(mirror(0, 2, 0, Some(2), "nones").is_ok());
+    assert!(is_check_violation(mirror(0, 2, 0, Some(2), "none")));
 }
 "#;
 
